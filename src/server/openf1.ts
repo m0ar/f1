@@ -66,6 +66,32 @@ async function waitForRateLimit(): Promise<void> {
   requestTimestamps.push(Date.now());
 }
 
+const DEFAULT_TIMEOUT_MS = 5000;
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return response;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function refreshToken(): Promise<string | null> {
   const username = (env as Record<string, string>).OPENF1_USERNAME;
   const password = (env as Record<string, string>).OPENF1_PASSWORD;
@@ -80,7 +106,7 @@ async function refreshToken(): Promise<string | null> {
     params.append("username", username);
     params.append("password", password);
 
-    const response = await fetch(TOKEN_URL, {
+    const response = await fetchWithTimeout(TOKEN_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -134,7 +160,7 @@ async function authenticatedFetch(url: string, retries = 3): Promise<Response> {
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, { headers });
+  const response = await fetchWithTimeout(url, { headers });
 
   // Retry on rate limit with exponential backoff
   if (response.status === 429 && retries > 0) {
