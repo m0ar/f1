@@ -6,6 +6,8 @@ import type {
   BetChartDataPoint,
   PointsChartDataPoint,
   EntityColorMap,
+  BetValidationResult,
+  BetMismatch,
 } from "@/types";
 
 /**
@@ -272,4 +274,162 @@ export function getConstructorColors(raceResults: RaceResult[]): EntityColorMap 
   });
 
   return colors;
+}
+
+/**
+ * Simple Levenshtein distance for fuzzy matching.
+ */
+function levenshteinDistance(a: string, b: string): number {
+  const matrix: number[][] = [];
+
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+
+  return matrix[b.length][a.length];
+}
+
+/**
+ * Find the closest match from a list of candidates.
+ */
+function findClosestMatch(
+  name: string,
+  candidates: string[]
+): string | null {
+  if (candidates.length === 0) return null;
+
+  const nameLower = name.toLowerCase();
+
+  // First, check for substring matches (e.g., "Haas" matches "Haas F1 Team")
+  for (const candidate of candidates) {
+    const candidateLower = candidate.toLowerCase();
+    if (candidateLower.includes(nameLower) || nameLower.includes(candidateLower)) {
+      return candidate;
+    }
+  }
+
+  // Fall back to Levenshtein distance for typos/variations
+  let bestMatch: string | null = null;
+  let bestDistance = Infinity;
+
+  for (const candidate of candidates) {
+    const candidateLower = candidate.toLowerCase();
+    const distance = levenshteinDistance(nameLower, candidateLower);
+
+    // Only suggest if reasonably close (less than half the longer string's length)
+    if (distance < bestDistance && distance < Math.max(name.length, candidate.length) / 2) {
+      bestDistance = distance;
+      bestMatch = candidate;
+    }
+  }
+
+  return bestMatch;
+}
+
+/**
+ * Extract all unique driver names from race results.
+ */
+export function getCanonicalDriverNames(raceResults: RaceResult[]): string[] {
+  const drivers = new Set<string>();
+
+  for (const result of raceResults) {
+    for (const driver of result.driverStandings) {
+      drivers.add(`${driver.driver_first_name} ${driver.driver_last_name}`);
+    }
+  }
+
+  return Array.from(drivers);
+}
+
+/**
+ * Extract all unique team names from race results.
+ */
+export function getCanonicalTeamNames(raceResults: RaceResult[]): string[] {
+  const teams = new Set<string>();
+
+  for (const result of raceResults) {
+    for (const team of result.teamStandings) {
+      teams.add(team.team_name);
+    }
+  }
+
+  return Array.from(teams);
+}
+
+/**
+ * Validate bets against canonical names from race results.
+ * Returns mismatches with suggestions for corrections.
+ */
+export function validateBets(
+  bets: Bets,
+  raceResults: RaceResult[]
+): BetValidationResult {
+  if (raceResults.length === 0) {
+    // Can't validate without race data
+    return { isValid: true, mismatches: [] };
+  }
+
+  const canonicalDrivers = getCanonicalDriverNames(raceResults);
+  const canonicalTeams = getCanonicalTeamNames(raceResults);
+
+  const canonicalDriversLower = new Set(canonicalDrivers.map((d) => d.toLowerCase()));
+  const canonicalTeamsLower = new Set(canonicalTeams.map((t) => t.toLowerCase()));
+
+  const mismatches: BetMismatch[] = [];
+
+  for (const [participantName, bet] of Object.entries(bets)) {
+    // Check drivers
+    for (const driverName of bet.drivers) {
+      if (!canonicalDriversLower.has(driverName.toLowerCase())) {
+        mismatches.push({
+          participantName,
+          type: "driver",
+          betName: driverName,
+          suggestion: findClosestMatch(driverName, canonicalDrivers),
+        });
+      }
+    }
+
+    // Check constructors
+    for (const teamName of bet.constructors) {
+      if (!canonicalTeamsLower.has(teamName.toLowerCase())) {
+        mismatches.push({
+          participantName,
+          type: "constructor",
+          betName: teamName,
+          suggestion: findClosestMatch(teamName, canonicalTeams),
+        });
+      }
+    }
+  }
+
+  // Deduplicate mismatches (same betName across participants)
+  const uniqueMismatches = mismatches.filter(
+    (mismatch, index, self) =>
+      index === self.findIndex(
+        (m) => m.type === mismatch.type && m.betName === mismatch.betName
+      )
+  );
+
+  return {
+    isValid: uniqueMismatches.length === 0,
+    mismatches: uniqueMismatches,
+  };
 }

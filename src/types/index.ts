@@ -143,3 +143,16 @@ export interface RaceDataResponse {
   results: RaceResult[];
   failedSessions: FailedSession[];
 }
+
+// Bet validation types
+export interface BetMismatch {
+  participantName: string;
+  type: "driver" | "constructor";
+  betName: string;
+  suggestion: string | null;
+}
+
+export interface BetValidationResult {
+  isValid: boolean;
+  mismatches: BetMismatch[];
+}

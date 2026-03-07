@@ -2,14 +2,14 @@
   "Alex": {
     "constructors": [
       "McLaren",
-      "Red Bull",
+      "Red Bull Racing",
       "Ferrari",
       "Mercedes",
       "Aston Martin",
       "Williams",
       "Alpine",
       "Racing Bulls",
-      "Haas",
+      "Haas F1 Team",
       "Kick Sauber"
     ],
     "drivers": [
@@ -23,7 +23,7 @@
       "Fernando Alonso",
       "Kimi Antonelli",
       "Pierre Gasly",
-      "Alex Albon",
+      "Alexander Albon",
       "Yuki Tsunoda",
       "Nico Hulkenberg",
       "Liam Lawson",
@@ -37,7 +37,7 @@
   },
   "Emma": {
     "constructors": [
-      "Red Bull",
+      "Red Bull Racing",
       "McLaren",
       "Ferrari",
       "Mercedes",
@@ -46,7 +46,7 @@
       "Williams",
       "Racing Bulls",
       "Kick Sauber",
-      "Haas"
+      "Haas F1 Team"
     ],
     "drivers": [
       "Max Verstappen",
@@ -60,7 +60,7 @@
       "Fernando Alonso",
       "Kimi Antonelli",
       "Yuki Tsunoda",
-      "Alex Albon",
+      "Alexander Albon",
       "Esteban Ocon",
       "Nico Hulkenberg",
       "Oliver Bearman",
@@ -75,13 +75,13 @@
     "constructors": [
       "Ferrari",
       "McLaren",
-      "Red Bull",
+      "Red Bull Racing",
       "Mercedes",
       "Aston Martin",
       "Williams",
       "Racing Bulls",
       "Alpine",
-      "Haas",
+      "Haas F1 Team",
       "Kick Sauber"
     ],
     "drivers": [
@@ -95,7 +95,7 @@
       "Fernando Alonso",
       "Kimi Antonelli",
       "Yuki Tsunoda",
-      "Alex Albon",
+      "Alexander Albon",
       "Pierre Gasly",
       "Nico Hulkenberg",
       "Esteban Ocon",
@@ -112,11 +112,11 @@
       "McLaren",
       "Ferrari",
       "Mercedes",
-      "Red Bull",
+      "Red Bull Racing",
       "Williams",
       "Aston Martin",
       "Alpine",
-      "Haas",
+      "Haas F1 Team",
       "Racing Bulls",
       "Kick Sauber"
     ],
@@ -130,7 +130,7 @@
       "Carlos Sainz",
       "Kimi Antonelli",
       "Fernando Alonso",
-      "Alex Albon",
+      "Alexander Albon",
       "Pierre Gasly",
       "Yuki Tsunoda",
       "Nico Hulkenberg",
@@ -145,7 +145,7 @@
   },
   "Oscar": {
     "constructors": [
-      "Red Bull",
+      "Red Bull Racing",
       "Ferrari",
       "McLaren",
       "Mercedes",
@@ -154,7 +154,7 @@
       "Williams",
       "Racing Bulls",
       "Kick Sauber",
-      "Haas"
+      "Haas F1 Team"
     ],
     "drivers": [
       "Max Verstappen",
@@ -167,7 +167,7 @@
       "Carlos Sainz",
       "Pierre Gasly",
       "Kimi Antonelli",
-      "Alex Albon",
+      "Alexander Albon",
       "Yuki Tsunoda",
       "Nico Hulkenberg",
       "Esteban Ocon",
@@ -184,12 +184,12 @@
       "McLaren",
       "Mercedes",
       "Ferrari",
-      "Red Bull",
+      "Red Bull Racing",
       "Williams",
       "Alpine",
       "Aston Martin",
       "Racing Bulls",
-      "Haas",
+      "Haas F1 Team",
       "Kick Sauber"
     ],
     "drivers": [
@@ -201,7 +201,7 @@
       "Lewis Hamilton",
       "Carlos Sainz",
       "Kimi Antonelli",
-      "Alex Albon",
+      "Alexander Albon",
       "Pierre Gasly",
       "Fernando Alonso",
       "Yuki Tsunoda",
@@ -218,14 +218,14 @@
   "Viktor": {
     "constructors": [
       "Ferrari",
-      "Red Bull",
+      "Red Bull Racing",
       "McLaren",
       "Mercedes",
       "Alpine",
       "Aston Martin",
       "Racing Bulls",
       "Williams",
-      "Haas",
+      "Haas F1 Team",
       "Kick Sauber"
     ],
     "drivers": [
@@ -240,7 +240,7 @@
       "Carlos Sainz",
       "Kimi Antonelli",
       "Yuki Tsunoda",
-      "Alex Albon",
+      "Alexander Albon",
       "Nico Hulkenberg",
       "Esteban Ocon",
       "Oliver Bearman",
@@ -256,11 +256,11 @@
       "Mercedes",
       "McLaren",
       "Ferrari",
-      "Red Bull",
+      "Red Bull Racing",
       "Aston Martin",
       "Williams",
       "Alpine",
-      "Haas",
+      "Haas F1 Team",
       "Racing Bulls",
       "Kick Sauber"
     ],
@@ -274,7 +274,7 @@
       "Kimi Antonelli",
       "Carlos Sainz",
       "Fernando Alonso",
-      "Alex Albon",
+      "Alexander Albon",
       "Pierre Gasly",
       "Yuki Tsunoda",
       "Nico Hulkenberg",

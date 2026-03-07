@@ -21,9 +21,9 @@ import { Badge } from "@/components/ui/badge";
 import { ParticipantDetail } from "@/components/participant-detail";
 import { usePreferences, useHasHydrated } from "@/stores/preferences";
 import { fetchRaceResults } from "@/lib/api";
-import { getLeaderboard } from "@/lib/scoring";
+import { getLeaderboard, validateBets } from "@/lib/scoring";
 import { getBetsForYear } from "@/lib/bets";
-import type { RaceResult, ParticipantScore, FailedSession } from "@/types";
+import type { RaceResult, ParticipantScore, FailedSession, BetMismatch } from "@/types";
 
 export const Route = createFileRoute("/")({
   component: LeaderboardPage,
@@ -34,6 +34,7 @@ function LeaderboardPage() {
   const hasHydrated = useHasHydrated();
   const [raceResults, setRaceResults] = useState<RaceResult[]>([]);
   const [failedSessions, setFailedSessions] = useState<FailedSession[]>([]);
+  const [betMismatches, setBetMismatches] = useState<BetMismatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedParticipant, setSelectedParticipant] = useState<string | null>(null);
@@ -45,10 +46,16 @@ function LeaderboardPage() {
       setLoading(true);
       setError(null);
       setFailedSessions([]);
+      setBetMismatches([]);
       try {
         const response = await fetchRaceResults(selectedYear);
         setRaceResults(response.results);
         setFailedSessions(response.failedSessions);
+
+        // Validate bets against canonical names
+        const betsForValidation = getBetsForYear(selectedYear);
+        const validation = validateBets(betsForValidation, response.results);
+        setBetMismatches(validation.mismatches);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load data");
       } finally {
@@ -57,6 +64,8 @@ function LeaderboardPage() {
     }
     loadData();
   }, [selectedYear, hasHydrated]);
+
+  const bets = getBetsForYear(selectedYear);
 
   if (loading) {
     return (
@@ -79,7 +88,6 @@ function LeaderboardPage() {
     );
   }
 
-  const bets = getBetsForYear(selectedYear);
   const hasRaceData = raceResults.length > 0;
 
   if (Object.keys(bets).length === 0) {
@@ -135,6 +143,27 @@ function LeaderboardPage() {
             Failed to load {failedSessions.length} race{failedSessions.length > 1 ? "s" : ""}:{" "}
             {failedSessions.map((s) => s.circuitName).join(", ")}
           </span>
+        </div>
+      )}
+
+      {betMismatches.length > 0 && (
+        <div className="p-3 text-sm bg-orange-500/10 border border-orange-500/30 rounded-lg text-orange-700 dark:text-orange-400">
+          <div className="flex items-center gap-2 font-medium mb-2">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+            <span>Bet name mismatches detected (scores may be incorrect)</span>
+          </div>
+          <ul className="ml-6 space-y-1 list-disc">
+            {betMismatches.map((m) => (
+              <li key={`${m.type}-${m.betName}`}>
+                {m.type === "driver" ? "Driver" : "Team"} "{m.betName}" not found
+                {m.suggestion && (
+                  <span className="text-orange-600 dark:text-orange-300">
+                    {" "}— did you mean "{m.suggestion}"?
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
