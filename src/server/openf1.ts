@@ -23,6 +23,7 @@ const TOKEN_URL = "https://api.openf1.org/token";
 // Token cache (in-memory - acceptable since tokens are short-lived and cheap to refresh)
 let cachedToken: string | null = null;
 let tokenExpiry: number = 0;
+let tokenRefreshPromise: Promise<string | null> | null = null;
 
 // Rate limiting: 6 req/s, 60 req/min
 // Note: This is per-isolate, so actual rates may be higher across multiple isolates
@@ -63,12 +64,7 @@ async function waitForRateLimit(): Promise<void> {
   requestTimestamps.push(Date.now());
 }
 
-async function getAccessToken(): Promise<string | null> {
-  // Return cached token if still valid (with 60s buffer)
-  if (cachedToken && Date.now() < tokenExpiry - 60000) {
-    return cachedToken;
-  }
-
+async function refreshToken(): Promise<string | null> {
   const username = (env as Record<string, string>).OPENF1_USERNAME;
   const password = (env as Record<string, string>).OPENF1_PASSWORD;
 
@@ -102,6 +98,27 @@ async function getAccessToken(): Promise<string | null> {
   } catch (error) {
     console.error("Failed to get access token:", error);
     return null;
+  }
+}
+
+async function getAccessToken(): Promise<string | null> {
+  // Return cached token if still valid (with 60s buffer)
+  if (cachedToken && Date.now() < tokenExpiry - 60000) {
+    return cachedToken;
+  }
+
+  // If a refresh is already in progress, wait for it
+  if (tokenRefreshPromise) {
+    return tokenRefreshPromise;
+  }
+
+  // Start refresh and store the promise
+  tokenRefreshPromise = refreshToken();
+
+  try {
+    return await tokenRefreshPromise;
+  } finally {
+    tokenRefreshPromise = null;
   }
 }
 
