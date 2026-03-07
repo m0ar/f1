@@ -74,28 +74,12 @@ function RootComponent() {
   );
 }
 
-// Inline script to set theme before React hydrates (prevents flash)
-const themeScript = `
-(function() {
-  try {
-    var stored = localStorage.getItem('f1-betting-preferences');
-    if (stored) {
-      var parsed = JSON.parse(stored);
-      if (parsed.state && parsed.state.theme === 'dark') {
-        document.documentElement.classList.add('dark');
-      }
-    }
-  } catch (e) {}
-})();
-`;
-
 function RootDocument({
   children,
 }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en">
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <HeadContent />
       </head>
       <body className="min-h-screen bg-background antialiased">

@@ -7,16 +7,19 @@ import tsConfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
   plugins: [
-    tailwindcss(),
-    tsConfigPaths(),
-    cloudflare({ viteEnvironment: { name: "ssr" } }),
     tanstackStart(),
+    cloudflare({ viteEnvironment: { name: "ssr" } }),
+    tsConfigPaths(),
+    tailwindcss(),
     react({
       babel: {
         plugins: ["babel-plugin-react-compiler"],
       },
     }),
   ],
+  ssr: {
+    noExternal: ["@tanstack/react-start", "@tanstack/react-router"],
+  },
   server: {
     port: 3000,
   },
