@@ -93,8 +93,8 @@ async function fetchWithTimeout(
 }
 
 async function refreshToken(): Promise<string | null> {
-  const username = (env as Record<string, string>).OPENF1_USERNAME;
-  const password = (env as Record<string, string>).OPENF1_PASSWORD;
+  const username = env.OPENF1_USERNAME;
+  const password = env.OPENF1_PASSWORD;
 
   if (!username || !password) {
     console.warn("OpenF1 credentials not configured, using unauthenticated requests");
@@ -115,7 +115,7 @@ async function refreshToken(): Promise<string | null> {
     });
 
     if (response.ok) {
-      const tokenData = await response.json();
+      const tokenData = await response.json<{access_token: string, expires_in: string}>();
       cachedToken = tokenData.access_token;
       tokenExpiry = Date.now() + (parseInt(tokenData.expires_in, 10) * 1000);
       return cachedToken;
@@ -181,7 +181,7 @@ export const fetchRaceSessions = createServerFn({ method: "GET" })
     );
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch race sessions: ${response.statusText}`);
+      throw new Error(`Failed to fetch race sessions for ${data.year}: ${response.statusText}`);
     }
 
     const sessions: RaceSession[] = await response.json();
@@ -198,7 +198,7 @@ export const fetchDriverStandings = createServerFn({ method: "GET" })
     );
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch driver standings: ${response.statusText}`);
+      throw new Error(`Failed to fetch driver standings for session ${data.sessionKey}: ${response.statusText}`);
     }
 
     const standings: DriverStanding[] = await response.json();
@@ -213,7 +213,7 @@ export const fetchTeamStandings = createServerFn({ method: "GET" })
     );
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch team standings: ${response.statusText}`);
+      throw new Error(`Failed to fetch team standings for session ${data.sessionKey}: ${response.statusText}`);
     }
 
     const standings: TeamStanding[] = await response.json();
@@ -296,7 +296,7 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
       );
 
       if (!sessionsResponse.ok) {
-        throw new Error(`Failed to fetch race sessions: ${sessionsResponse.statusText}`);
+        throw new Error(`Failed to fetch race sessions for ${data.year}: ${sessionsResponse.statusText}`);
       }
 
       sessions = await sessionsResponse.json();
