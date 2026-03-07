@@ -84,12 +84,18 @@ function LeaderboardPage() {
 
   if (Object.keys(bets).length === 0) {
     return (
-      <div className="flex items-center justify-center h-[50vh]">
-        <Card className="max-w-md">
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Leaderboard</h1>
+          <p className="text-sm sm:text-base text-muted-foreground">
+            {selectedYear} Season
+          </p>
+        </div>
+        <Card>
           <CardHeader>
             <CardTitle>No Bets Data</CardTitle>
             <CardDescription>
-              No betting predictions available for {selectedYear}.
+              No betting predictions have been added for the {selectedYear} season yet.
             </CardDescription>
           </CardHeader>
         </Card>
