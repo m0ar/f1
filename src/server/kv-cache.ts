@@ -163,8 +163,13 @@ export async function getCachedRaceResultsForYear(
     // Fetch all known session keys in parallel
     const cached = await Promise.all(
       sessionKeys.map(async (key) => {
-        const result = await kv.get(`race:${year}:${key}`, "json");
-        return { key, result: result as RaceResult | null };
+        try {
+          const result = await kv.get(`race:${year}:${key}`, "json");
+          return { key, result: result as RaceResult | null };
+        } catch {
+          // Skip corrupted entries, keep others
+          return { key, result: null };
+        }
       })
     );
 
