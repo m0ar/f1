@@ -61,7 +61,7 @@ function RootComponent() {
   }, [theme, isClient]);
 
   return (
-    <RootDocument theme={theme}>
+    <RootDocument>
       <TooltipProvider>
         <div className="flex min-h-screen flex-col">
           <Header />
@@ -74,13 +74,28 @@ function RootComponent() {
   );
 }
 
+// Inline script to set theme before React hydrates (prevents flash)
+const themeScript = `
+(function() {
+  try {
+    var stored = localStorage.getItem('f1-betting-preferences');
+    if (stored) {
+      var parsed = JSON.parse(stored);
+      if (parsed.state && parsed.state.theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      }
+    }
+  } catch (e) {}
+})();
+`;
+
 function RootDocument({
   children,
-  theme,
-}: Readonly<{ children: ReactNode; theme: string }>) {
+}: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en" className={theme}>
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <HeadContent />
       </head>
       <body className="min-h-screen bg-background antialiased">
