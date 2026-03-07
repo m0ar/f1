@@ -1,0 +1,24 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "f1-betting-tracker",
+	"compatibility_date": "2026-03-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"main": "@tanstack/react-start/server-entry",
+	"observability": {
+		"enabled": true
+	},
+	"kv_namespaces": [
+		{
+			"binding": "F1_DRIVER_NAMES",
+			"id": "87786374ed8945339c03b8bda4a3ba9d",
+			"remote": true
+		},
+		{
+			"binding": "F1_RACE_RESULTS",
+			"id": "dcffb96985034ff3b1a800b5d1e23c3c",
+			"remote": true
+		}
+	]
+}
