@@ -2,8 +2,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { env } from "cloudflare:workers";
 import type {
   RaceSession,
-  DriverStanding,
-  TeamStanding,
   ApiDriverChampionship,
   ApiTeamChampionship,
   ApiDriver,
@@ -172,53 +170,6 @@ async function authenticatedFetch(url: string, retries = 3): Promise<Response> {
 
   return response;
 }
-
-export const fetchRaceSessions = createServerFn({ method: "GET" })
-  .inputValidator((data: { year: number }) => data)
-  .handler(async ({ data }) => {
-    const response = await authenticatedFetch(
-      `${BASE_URL}/sessions?session_name=Race&year=${data.year}`
-    );
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch race sessions for ${data.year}: ${response.statusText}`);
-    }
-
-    const sessions: RaceSession[] = await response.json();
-    return sessions.sort(
-      (a, b) => new Date(a.date_start).getTime() - new Date(b.date_start).getTime()
-    );
-  });
-
-export const fetchDriverStandings = createServerFn({ method: "GET" })
-  .inputValidator((data: { sessionKey: number }) => data)
-  .handler(async ({ data }) => {
-    const response = await authenticatedFetch(
-      `${BASE_URL}/championship_drivers?session_key=${data.sessionKey}`
-    );
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch driver standings for session ${data.sessionKey}: ${response.statusText}`);
-    }
-
-    const standings: DriverStanding[] = await response.json();
-    return standings.sort((a, b) => a.position - b.position);
-  });
-
-export const fetchTeamStandings = createServerFn({ method: "GET" })
-  .inputValidator((data: { sessionKey: number }) => data)
-  .handler(async ({ data }) => {
-    const response = await authenticatedFetch(
-      `${BASE_URL}/championship_teams?session_key=${data.sessionKey}`
-    );
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch team standings for session ${data.sessionKey}: ${response.statusText}`);
-    }
-
-    const standings: TeamStanding[] = await response.json();
-    return standings.sort((a, b) => a.position - b.position);
-  });
 
 // In-memory cache only for session list (cheap to refetch, changes rarely)
 // Race results and driver names use KV for persistence
