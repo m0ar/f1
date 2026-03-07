@@ -417,5 +417,5 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
       }
     }
 
-    return { results, failedSessions };
+    return { results, failedSessions, totalRaces: sessions.length };
   });

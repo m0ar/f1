@@ -33,6 +33,7 @@ function LeaderboardPage() {
   const selectedYear = usePreferences((state) => state.selectedYear);
   const hasHydrated = useHasHydrated();
   const [raceResults, setRaceResults] = useState<RaceResult[]>([]);
+  const [totalRaces, setTotalRaces] = useState<number>(0);
   const [failedSessions, setFailedSessions] = useState<FailedSession[]>([]);
   const [betMismatches, setBetMismatches] = useState<BetMismatch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +51,7 @@ function LeaderboardPage() {
       try {
         const response = await fetchRaceResults(selectedYear);
         setRaceResults(response.results);
+        setTotalRaces(response.totalRaces);
         setFailedSessions(response.failedSessions);
 
         // Validate bets against canonical names
@@ -132,7 +134,7 @@ function LeaderboardPage() {
           </p>
         </div>
         <Badge variant="outline" className="text-sm w-fit">
-          {raceResults.length} / 24 races
+          {raceResults.length} / {totalRaces} races
         </Badge>
       </div>
 

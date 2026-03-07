@@ -142,6 +142,7 @@ export interface FailedSession {
 export interface RaceDataResponse {
   results: RaceResult[];
   failedSessions: FailedSession[];
+  totalRaces: number;
 }
 
 // Bet validation types
