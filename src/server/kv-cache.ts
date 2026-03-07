@@ -21,7 +21,7 @@ export async function getDriverFromCache(
   driverNumber: number
 ): Promise<CachedDriverInfo | null> {
   try {
-    const kv = (env as { F1_DRIVER_NAMES?: KVNamespace }).F1_DRIVER_NAMES;
+    const kv = env.F1_DRIVER_NAMES;
     if (!kv) return null;
 
     const cached = await kv.get(`driver:${driverNumber}`, "json");
@@ -37,7 +37,7 @@ export async function cacheDriver(
   info: CachedDriverInfo
 ): Promise<void> {
   try {
-    const kv = (env as { F1_DRIVER_NAMES?: KVNamespace }).F1_DRIVER_NAMES;
+    const kv = env.F1_DRIVER_NAMES;
     if (!kv) return;
 
     await kv.put(`driver:${driverNumber}`, JSON.stringify(info));
@@ -50,7 +50,7 @@ export async function cacheDriver(
 // Also caches team info extracted from driver data
 export async function cacheDriversFromApi(drivers: ApiDriver[]): Promise<void> {
   try {
-    const kv = (env as { F1_DRIVER_NAMES?: KVNamespace }).F1_DRIVER_NAMES;
+    const kv = env.F1_DRIVER_NAMES;
     if (!kv) return;
 
     // Extract unique teams from drivers
@@ -94,7 +94,7 @@ export async function getTeamFromCache(
   teamName: string
 ): Promise<CachedTeamInfo | null> {
   try {
-    const kv = (env as { F1_DRIVER_NAMES?: KVNamespace }).F1_DRIVER_NAMES;
+    const kv = env.F1_DRIVER_NAMES;
     if (!kv) return null;
 
     const cached = await kv.get(`team:${teamName}`, "json");
@@ -107,7 +107,7 @@ export async function getTeamFromCache(
 // Get all cached team names
 export async function getAllCachedTeams(): Promise<string[]> {
   try {
-    const kv = (env as { F1_DRIVER_NAMES?: KVNamespace }).F1_DRIVER_NAMES;
+    const kv = env.F1_DRIVER_NAMES;
     if (!kv) return [];
 
     const list = await kv.list({ prefix: "team:" });
@@ -123,7 +123,7 @@ export async function getRaceResultFromCache(
   sessionKey: number
 ): Promise<RaceResult | null> {
   try {
-    const kv = (env as { F1_RACE_RESULTS?: KVNamespace }).F1_RACE_RESULTS;
+    const kv = env.F1_RACE_RESULTS;
     if (!kv) return null;
 
     const cached = await kv.get(`race:${year}:${sessionKey}`, "json");
@@ -136,7 +136,7 @@ export async function getRaceResultFromCache(
 // Store race result in KV cache
 export async function cacheRaceResult(year: number, result: RaceResult): Promise<void> {
   try {
-    const kv = (env as { F1_RACE_RESULTS?: KVNamespace }).F1_RACE_RESULTS;
+    const kv = env.F1_RACE_RESULTS;
     if (!kv) return;
 
     await kv.put(`race:${year}:${result.sessionKey}`, JSON.stringify(result));
@@ -153,13 +153,13 @@ export async function getCachedRaceResultsForYear(
   const results = new Map<number, RaceResult>();
 
   try {
-    const kv = (env as { F1_RACE_RESULTS?: KVNamespace }).F1_RACE_RESULTS;
+    const kv = env.F1_RACE_RESULTS;
     if (!kv) return results;
 
     // Fetch all known session keys in parallel
     const cached = await Promise.all(
       sessionKeys.map(async (key) => {
-        const result = await kv.get(`race:${key}`, "json");
+        const result = await kv.get(`race:${year}:${key}`, "json");
         return { key, result: result as RaceResult | null };
       })
     );
