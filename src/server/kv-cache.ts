@@ -18,13 +18,14 @@ interface CachedTeamInfo {
 
 // Get driver info from KV cache
 export async function getDriverFromCache(
+  year: number,
   driverNumber: number
 ): Promise<CachedDriverInfo | null> {
   try {
     const kv = env.F1_DRIVER_NAMES;
     if (!kv) return null;
 
-    const cached = await kv.get(`driver:${driverNumber}`, "json");
+    const cached = await kv.get(`driver:${year}:${driverNumber}`, "json");
     return cached as CachedDriverInfo | null;
   } catch {
     return null;
@@ -33,6 +34,7 @@ export async function getDriverFromCache(
 
 // Store driver info in KV cache
 export async function cacheDriver(
+  year: number,
   driverNumber: number,
   info: CachedDriverInfo
 ): Promise<void> {
@@ -40,7 +42,7 @@ export async function cacheDriver(
     const kv = env.F1_DRIVER_NAMES;
     if (!kv) return;
 
-    await kv.put(`driver:${driverNumber}`, JSON.stringify(info));
+    await kv.put(`driver:${year}:${driverNumber}`, JSON.stringify(info));
   } catch {
     // Silently fail - caching is best-effort
   }
@@ -48,7 +50,7 @@ export async function cacheDriver(
 
 // Cache multiple drivers at once (from API response)
 // Also caches team info extracted from driver data
-export async function cacheDriversFromApi(drivers: ApiDriver[]): Promise<void> {
+export async function cacheDriversFromApi(year: number, drivers: ApiDriver[]): Promise<void> {
   try {
     const kv = env.F1_DRIVER_NAMES;
     if (!kv) return;
@@ -69,7 +71,7 @@ export async function cacheDriversFromApi(drivers: ApiDriver[]): Promise<void> {
       // Cache drivers
       ...drivers.map((driver) =>
         kv.put(
-          `driver:${driver.driver_number}`,
+          `driver:${year}:${driver.driver_number}`,
           JSON.stringify({
             firstName: driver.first_name,
             lastName: driver.last_name,
@@ -81,7 +83,7 @@ export async function cacheDriversFromApi(drivers: ApiDriver[]): Promise<void> {
       ),
       // Cache teams
       ...Array.from(teams.entries()).map(([name, info]) =>
-        kv.put(`team:${name}`, JSON.stringify(info))
+        kv.put(`team:${year}:${name}`, JSON.stringify(info))
       ),
     ]);
   } catch {
@@ -91,27 +93,29 @@ export async function cacheDriversFromApi(drivers: ApiDriver[]): Promise<void> {
 
 // Get team info from KV cache
 export async function getTeamFromCache(
+  year: number,
   teamName: string
 ): Promise<CachedTeamInfo | null> {
   try {
     const kv = env.F1_DRIVER_NAMES;
     if (!kv) return null;
 
-    const cached = await kv.get(`team:${teamName}`, "json");
+    const cached = await kv.get(`team:${year}:${teamName}`, "json");
     return cached as CachedTeamInfo | null;
   } catch {
     return null;
   }
 }
 
-// Get all cached team names
-export async function getAllCachedTeams(): Promise<string[]> {
+// Get all cached team names for a year
+export async function getAllCachedTeams(year: number): Promise<string[]> {
   try {
     const kv = env.F1_DRIVER_NAMES;
     if (!kv) return [];
 
-    const list = await kv.list({ prefix: "team:" });
-    return list.keys.map((k) => k.name.replace("team:", ""));
+    const prefix = `team:${year}:`;
+    const list = await kv.list({ prefix });
+    return list.keys.map((k) => k.name.replace(prefix, ""));
   } catch {
     return [];
   }

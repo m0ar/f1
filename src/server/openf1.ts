@@ -194,7 +194,7 @@ async function lookupDriverByNumber(
 ): Promise<ApiDriver | null> {
   try {
     // First check KV cache
-    const cached = await getDriverFromCache(driverNumber);
+    const cached = await getDriverFromCache(year, driverNumber);
     if (cached) {
       return {
         driver_number: driverNumber,
@@ -224,7 +224,7 @@ async function lookupDriverByNumber(
         // Return the most recent entry (last in array)
         const driver = drivers[drivers.length - 1];
         // Cache for future lookups
-        await cacheDriversFromApi([driver]);
+        await cacheDriversFromApi(year, [driver]);
         return driver;
       }
     }
@@ -301,7 +301,7 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
         if (driversResponse.ok) {
           sessionDrivers = await driversResponse.json();
           // Cache all drivers to KV for future lookups
-          await cacheDriversFromApi(sessionDrivers);
+          await cacheDriversFromApi(data.year, sessionDrivers);
           // Add to local map for this request
           for (const driver of sessionDrivers) {
             localDriverMap.set(driver.driver_number, driver);
