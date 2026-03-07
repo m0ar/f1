@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { motion } from "motion/react";
-import { Trophy, TrendingUp, TrendingDown, Minus, Eye, AlertTriangle } from "lucide-react";
+import { Trophy, TrendingUp, TrendingDown, Minus, Eye, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -23,7 +23,7 @@ import { usePreferences, useHasHydrated } from "@/stores/preferences";
 import { fetchRaceResults } from "@/lib/api";
 import { getLeaderboard, validateBets } from "@/lib/scoring";
 import { getBetsForYear } from "@/lib/bets";
-import type { RaceResult, ParticipantScore, FailedSession, BetMismatch } from "@/types";
+import type { RaceResult, ParticipantScore, FailedSession, BetMismatch, UpcomingRace } from "@/types";
 
 export const Route = createFileRoute("/")({
   component: LeaderboardPage,
@@ -33,6 +33,8 @@ function LeaderboardPage() {
   const selectedYear = usePreferences((state) => state.selectedYear);
   const hasHydrated = useHasHydrated();
   const [raceResults, setRaceResults] = useState<RaceResult[]>([]);
+  const [upcomingRaces, setUpcomingRaces] = useState<UpcomingRace[]>([]);
+  const [selectedRaceIndex, setSelectedRaceIndex] = useState<number | null>(null);
   const [totalRaces, setTotalRaces] = useState<number>(0);
   const [failedSessions, setFailedSessions] = useState<FailedSession[]>([]);
   const [betMismatches, setBetMismatches] = useState<BetMismatch[]>([]);
@@ -51,8 +53,15 @@ function LeaderboardPage() {
       try {
         const response = await fetchRaceResults(selectedYear);
         setRaceResults(response.results);
+        setUpcomingRaces(response.upcomingRaces);
         setTotalRaces(response.totalRaces);
         setFailedSessions(response.failedSessions);
+        // Default to the latest completed race
+        if (response.results.length > 0) {
+          setSelectedRaceIndex(response.results.length - 1);
+        } else {
+          setSelectedRaceIndex(null);
+        }
 
         // Validate bets against canonical names
         const betsForValidation = getBetsForYear(selectedYear);
@@ -66,6 +75,27 @@ function LeaderboardPage() {
     }
     loadData();
   }, [selectedYear, hasHydrated]);
+
+  // Keyboard navigation for races (left/right arrows)
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (selectedRaceIndex === null || raceResults.length === 0) return;
+
+      if (event.key === "ArrowLeft" && selectedRaceIndex > 0) {
+        event.preventDefault();
+        setSelectedRaceIndex(selectedRaceIndex - 1);
+      } else if (event.key === "ArrowRight" && selectedRaceIndex < raceResults.length - 1) {
+        event.preventDefault();
+        setSelectedRaceIndex(selectedRaceIndex + 1);
+      }
+    },
+    [selectedRaceIndex, raceResults.length]
+  );
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
 
   const bets = getBetsForYear(selectedYear);
 
@@ -91,6 +121,8 @@ function LeaderboardPage() {
   }
 
   const hasRaceData = raceResults.length > 0;
+  const selectedResult = selectedRaceIndex !== null ? raceResults[selectedRaceIndex] : null;
+  const previousResult = selectedRaceIndex !== null && selectedRaceIndex > 0 ? raceResults[selectedRaceIndex - 1] : null;
 
   if (Object.keys(bets).length === 0) {
     return (
@@ -113,11 +145,7 @@ function LeaderboardPage() {
     );
   }
 
-  const latestResult = hasRaceData ? raceResults[raceResults.length - 1] : null;
-  const leaderboard = latestResult ? getLeaderboard(bets, latestResult) : null;
-
-  // Calculate previous standings for trend indicators
-  const previousResult = raceResults.length > 1 ? raceResults[raceResults.length - 2] : null;
+  const leaderboard = selectedResult ? getLeaderboard(bets, selectedResult) : null;
   const previousLeaderboard = previousResult ? getLeaderboard(bets, previousResult) : null;
 
   const participants = Object.keys(bets);
@@ -128,8 +156,8 @@ function LeaderboardPage() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Leaderboard</h1>
           <p className="text-sm sm:text-base text-muted-foreground">
-            {hasRaceData && latestResult
-              ? `Standings after ${latestResult.circuitName} (${latestResult.countryName})`
+            {hasRaceData && selectedResult
+              ? `Standings after ${selectedResult.circuitName} (${selectedResult.countryName})`
               : `Waiting for ${selectedYear} season to begin`}
           </p>
         </div>
@@ -277,25 +305,42 @@ function LeaderboardPage() {
           <CardTitle>Race History</CardTitle>
           <CardDescription>
             {hasRaceData
-              ? "Results from all completed races this season"
+              ? "Click a completed race to view standings at that point"
               : "No races completed yet"}
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          {hasRaceData ? (
-            <div className="flex flex-wrap gap-2">
-              {raceResults.map((result, index) => (
-                <Badge
-                  key={result.sessionKey}
-                  variant={index === raceResults.length - 1 ? "default" : "secondary"}
-                >
-                  {result.circuitName}
-                </Badge>
-              ))}
-            </div>
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              Race results will appear here once the season starts.
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {raceResults.map((result, index) => (
+              <Badge
+                key={result.sessionKey}
+                variant={index === selectedRaceIndex ? "default" : "secondary"}
+                className="cursor-pointer hover:opacity-80 transition-opacity"
+                onClick={() => setSelectedRaceIndex(index)}
+              >
+                {result.circuitName}
+              </Badge>
+            ))}
+            {upcomingRaces.map((race) => (
+              <Badge
+                key={race.sessionKey}
+                variant="outline"
+                className="opacity-50 cursor-default"
+              >
+                {race.circuitName}
+              </Badge>
+            ))}
+            {!hasRaceData && upcomingRaces.length === 0 && (
+              <p className="text-muted-foreground text-sm">
+                Race results will appear here once the season starts.
+              </p>
+            )}
+          </div>
+          {hasRaceData && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <ChevronLeft className="h-3 w-3" />
+              <ChevronRight className="h-3 w-3" />
+              <span>arrow keys to navigate</span>
             </p>
           )}
         </CardContent>
@@ -307,7 +352,7 @@ function LeaderboardPage() {
           onOpenChange={(open) => !open && setSelectedParticipant(null)}
           participantName={selectedParticipant}
           bet={bets[selectedParticipant]}
-          raceResult={latestResult}
+          raceResult={selectedResult}
         />
       )}
     </div>

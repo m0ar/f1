@@ -8,6 +8,7 @@ import type {
   RaceResult,
   RaceDataResponse,
   FailedSession,
+  UpcomingRace,
 } from "@/types";
 import { transformDriverStandings, transformTeamStandings } from "./transforms";
 import {
@@ -242,6 +243,7 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
     if (cachedSessions && Date.now() - cachedSessions.timestamp < SESSIONS_CACHE_TTL) {
       sessions = cachedSessions.sessions;
     } else {
+      // This endpoint returns ALL race sessions for the year, including upcoming races
       const sessionsResponse = await authenticatedFetch(
         `${BASE_URL}/sessions?session_name=Race&year=${data.year}`
       );
@@ -258,14 +260,22 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
     }
 
     const results: RaceResult[] = [];
+    const upcomingRaces: UpcomingRace[] = [];
     const failedSessions: FailedSession[] = [];
 
     // Build a local driver map as we process sessions (for within-request use)
     const localDriverMap = new Map<number, ApiDriver>();
 
     for (const session of sessions) {
-      // Skip future races
+      // Collect future races as upcoming (no standings data yet)
       if (new Date(session.date_start).getTime() > Date.now()) {
+        upcomingRaces.push({
+          sessionKey: session.session_key,
+          location: session.location,
+          date: session.date_start,
+          circuitName: session.circuit_short_name,
+          countryName: session.country_name,
+        });
         continue;
       }
 
@@ -368,5 +378,5 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
       }
     }
 
-    return { results, failedSessions, totalRaces: sessions.length };
+    return { results, upcomingRaces, failedSessions, totalRaces: sessions.length };
   });

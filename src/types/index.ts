@@ -138,9 +138,19 @@ export interface FailedSession {
   error: string;
 }
 
+// Upcoming race session (no standings data yet)
+export interface UpcomingRace {
+  sessionKey: number;
+  location: string;
+  date: string;
+  circuitName: string;
+  countryName: string;
+}
+
 // Response from race data fetch including any failures
 export interface RaceDataResponse {
   results: RaceResult[];
+  upcomingRaces: UpcomingRace[];
   failedSessions: FailedSession[];
   totalRaces: number;
 }

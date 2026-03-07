@@ -14,7 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { ArrowUp, ArrowDown, Minus } from "lucide-react";
+import { ArrowUp, ArrowDown, Minus, ChevronLeft, ChevronRight } from "lucide-react";
 import type { ParticipantBet, RaceResult } from "@/types";
 
 interface ParticipantDetailProps {
@@ -147,6 +147,14 @@ export function ParticipantDetail({
           </div>
           </div>
         </div>
+
+        {hasRaceData && (
+          <div className="flex-shrink-0 pt-3 border-t text-xs text-muted-foreground flex items-center justify-center gap-1">
+            <ChevronLeft className="h-3 w-3" />
+            <ChevronRight className="h-3 w-3" />
+            <span>arrow keys to switch races</span>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
