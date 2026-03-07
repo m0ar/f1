@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -19,7 +20,7 @@ import {
   getConstructorColors,
 } from "@/lib/scoring";
 import { getBetsForYear } from "@/lib/bets";
-import type { RaceResult } from "@/types";
+import type { RaceResult, FailedSession } from "@/types";
 
 export const Route = createFileRoute("/constructors")({
   component: ConstructorsPage,
@@ -29,6 +30,7 @@ function ConstructorsPage() {
   const selectedYear = usePreferences((state) => state.selectedYear);
   const hasHydrated = useHasHydrated();
   const [raceResults, setRaceResults] = useState<RaceResult[]>([]);
+  const [failedSessions, setFailedSessions] = useState<FailedSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,9 +40,11 @@ function ConstructorsPage() {
     async function loadData() {
       setLoading(true);
       setError(null);
+      setFailedSessions([]);
       try {
-        const results = await fetchRaceResults(selectedYear);
-        setRaceResults(results);
+        const response = await fetchRaceResults(selectedYear);
+        setRaceResults(response.results);
+        setFailedSessions(response.failedSessions);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load data");
       } finally {
@@ -89,6 +93,16 @@ function ConstructorsPage() {
           Track betting performance and championship points for constructors
         </p>
       </div>
+
+      {failedSessions.length > 0 && (
+        <div className="flex items-center gap-2 p-3 text-sm bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-yellow-700 dark:text-yellow-400">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          <span>
+            Failed to load {failedSessions.length} race{failedSessions.length > 1 ? "s" : ""}:{" "}
+            {failedSessions.map((s) => s.circuitName).join(", ")}
+          </span>
+        </div>
+      )}
 
       {!hasRaceData && (
         <Card>

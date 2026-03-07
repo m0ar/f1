@@ -8,6 +8,8 @@ import type {
   ApiTeamChampionship,
   ApiDriver,
   RaceResult,
+  RaceDataResponse,
+  FailedSession,
 } from "@/types";
 import { transformDriverStandings, transformTeamStandings } from "./transforms";
 import {
@@ -255,7 +257,7 @@ async function lookupDriverByNumber(
 // Batched fetch - gets all race data in one server call
 export const fetchAllRaceData = createServerFn({ method: "GET" })
   .inputValidator((data: { year: number }) => data)
-  .handler(async ({ data }): Promise<RaceResult[]> => {
+  .handler(async ({ data }): Promise<RaceDataResponse> => {
     // Get sessions (in-memory cache is fine here - cheap to refetch)
     let sessions: RaceSession[];
     const cachedSessions = sessionsCache.get(data.year);
@@ -279,6 +281,7 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
     }
 
     const results: RaceResult[] = [];
+    const failedSessions: FailedSession[] = [];
 
     // Build a local driver map as we process sessions (for within-request use)
     const localDriverMap = new Map<number, ApiDriver>();
@@ -379,8 +382,14 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
         }
       } catch (error) {
         console.warn(`Skipping session ${session.session_key}:`, error);
+        failedSessions.push({
+          sessionKey: session.session_key,
+          location: session.location,
+          circuitName: session.circuit_short_name,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
       }
     }
 
-    return results;
+    return { results, failedSessions };
   });

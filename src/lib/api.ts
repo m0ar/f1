@@ -1,10 +1,10 @@
-import type { RaceResult } from "@/types";
+import type { RaceDataResponse } from "@/types";
 import { fetchAllRaceData } from "@/server/openf1";
 
 // In-flight request deduplication (prevents duplicate concurrent requests)
-const pendingRequests = new Map<number, Promise<RaceResult[]>>();
+const pendingRequests = new Map<number, Promise<RaceDataResponse>>();
 
-export async function fetchRaceResults(year: number): Promise<RaceResult[]> {
+export async function fetchRaceResults(year: number): Promise<RaceDataResponse> {
   // Deduplicate concurrent requests for the same year
   const pending = pendingRequests.get(year);
   if (pending) {
@@ -12,9 +12,9 @@ export async function fetchRaceResults(year: number): Promise<RaceResult[]> {
   }
 
   // Single server call that handles all the batching and rate limiting
-  const request = fetchAllRaceData({ data: { year } }).then((results) => {
+  const request = fetchAllRaceData({ data: { year } }).then((response) => {
     pendingRequests.delete(year);
-    return results;
+    return response;
   }).catch((error) => {
     pendingRequests.delete(year);
     throw error;

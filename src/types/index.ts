@@ -129,3 +129,17 @@ export interface PointsChartDataPoint {
 
 // Map of entity name to hex color (without #)
 export type EntityColorMap = Record<string, string>;
+
+// Failed session info for error reporting
+export interface FailedSession {
+  sessionKey: number;
+  location: string;
+  circuitName: string;
+  error: string;
+}
+
+// Response from race data fetch including any failures
+export interface RaceDataResponse {
+  results: RaceResult[];
+  failedSessions: FailedSession[];
+}
