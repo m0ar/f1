@@ -416,6 +416,8 @@ function LeaderboardPage() {
           participantName={selectedParticipant}
           bet={bets[selectedParticipant]}
           raceResult={selectedResult}
+          participants={leaderboard ? leaderboard.map((p) => p.name) : participants}
+          onParticipantChange={setSelectedParticipant}
         />
       )}
     </div>

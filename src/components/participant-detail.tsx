@@ -16,6 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { ArrowUp, ArrowDown, Minus, ChevronLeft, ChevronRight } from "lucide-react";
 import type { ParticipantBet, RaceResult } from "@/types";
+import { useEffect, useCallback } from "react";
 
 interface ParticipantDetailProps {
   open: boolean;
@@ -23,6 +24,8 @@ interface ParticipantDetailProps {
   participantName: string;
   bet: ParticipantBet;
   raceResult: RaceResult | null;
+  participants?: string[];
+  onParticipantChange?: (name: string) => void;
 }
 
 export function ParticipantDetail({
@@ -31,8 +34,35 @@ export function ParticipantDetail({
   participantName,
   bet,
   raceResult,
+  participants,
+  onParticipantChange,
 }: ParticipantDetailProps) {
   const hasRaceData = !!raceResult;
+
+  // Keyboard navigation for participants (up/down arrows)
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!participants || !onParticipantChange) return;
+
+      const currentIndex = participants.indexOf(participantName);
+      if (currentIndex === -1) return;
+
+      if (event.key === "ArrowUp" && currentIndex > 0) {
+        event.preventDefault();
+        onParticipantChange(participants[currentIndex - 1]);
+      } else if (event.key === "ArrowDown" && currentIndex < participants.length - 1) {
+        event.preventDefault();
+        onParticipantChange(participants[currentIndex + 1]);
+      }
+    },
+    [participants, participantName, onParticipantChange]
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, handleKeyDown]);
 
   const driverStandings = raceResult?.driverStandings.map((d) => ({
     name: `${d.driver_first_name} ${d.driver_last_name}`,
@@ -148,11 +178,23 @@ export function ParticipantDetail({
           </div>
         </div>
 
-        {hasRaceData && (
-          <div className="flex-shrink-0 pt-3 border-t text-xs text-muted-foreground flex items-center justify-center gap-1">
-            <ChevronLeft className="h-3 w-3" />
-            <ChevronRight className="h-3 w-3" />
-            <span>arrow keys to switch races</span>
+        {(hasRaceData || participants) && (
+          <div className="flex-shrink-0 pt-3 border-t text-xs text-muted-foreground flex items-center justify-center gap-2">
+            {hasRaceData && (
+              <span className="flex items-center gap-1">
+                <ChevronLeft className="h-3 w-3" />
+                <ChevronRight className="h-3 w-3" />
+                races
+              </span>
+            )}
+            {hasRaceData && participants && <span>·</span>}
+            {participants && (
+              <span className="flex items-center gap-1">
+                <ArrowUp className="h-3 w-3" />
+                <ArrowDown className="h-3 w-3" />
+                participants
+              </span>
+            )}
           </div>
         )}
       </DialogContent>
