@@ -21,8 +21,8 @@ interface PreferencesState {
 export const usePreferences = create<PreferencesState>()(
   persist(
     (set) => ({
-      theme: "light",
-      selectedYear: 2025, // Default to 2025 since it has data
+      theme: "dark",
+      selectedYear: 2026,
       chartRaceRange: "all" as RaceRange,
       _hasHydrated: false,
       simulateLive: false,
