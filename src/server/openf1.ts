@@ -256,6 +256,94 @@ async function lookupDriverByNumber(
   }
 }
 
+// Background refresh for stale cache entries (fire-and-forget)
+// Fetches fresh data from API and updates the cache for next request
+async function refreshRaceResult(
+  session: RaceSession,
+  year: number,
+  localDriverMap: Map<number, ApiDriver>
+): Promise<void> {
+  try {
+    // Fetch driver standings, team standings, and driver info in parallel
+    const [driverChampResponse, teamChampResponse, driversResponse] = await Promise.all([
+      authenticatedFetch(
+        `${BASE_URL}/championship_drivers?session_key=${session.session_key}`
+      ),
+      authenticatedFetch(
+        `${BASE_URL}/championship_teams?session_key=${session.session_key}`
+      ),
+      authenticatedFetch(
+        `${BASE_URL}/drivers?session_key=${session.session_key}`
+      ),
+    ]);
+
+    // Parse session drivers
+    let sessionDrivers: ApiDriver[] = [];
+    if (driversResponse.ok) {
+      sessionDrivers = await driversResponse.json();
+      // Cache all drivers to KV for future lookups
+      await cacheDriversFromApi(year, sessionDrivers);
+      // Add to local map
+      for (const driver of sessionDrivers) {
+        localDriverMap.set(driver.driver_number, driver);
+      }
+    }
+
+    if (driverChampResponse.ok && teamChampResponse.ok) {
+      const apiDriverStandings: ApiDriverChampionship[] = await driverChampResponse.json();
+      const apiTeamStandings: ApiTeamChampionship[] = await teamChampResponse.json();
+
+      if (apiDriverStandings.length > 0 || apiTeamStandings.length > 0) {
+        // Check for unknown drivers and look them up
+        const unknownDriverNumbers = apiDriverStandings
+          .filter((s) => !localDriverMap.has(s.driver_number))
+          .map((s) => s.driver_number);
+
+        if (unknownDriverNumbers.length > 0) {
+          const lookups = await Promise.all(
+            unknownDriverNumbers.map((num) => lookupDriverByNumber(num, year))
+          );
+          for (const driver of lookups) {
+            if (driver) {
+              localDriverMap.set(driver.driver_number, driver);
+            }
+          }
+        }
+
+        const allDrivers = Array.from(localDriverMap.values());
+        const driverStandings = transformDriverStandings(
+          apiDriverStandings,
+          allDrivers,
+          session.session_key
+        );
+
+        // Use API team standings if they have valid team names,
+        // otherwise derive from driver standings (more reliable)
+        const hasNullTeamNames = apiTeamStandings.some((t) => t.team_name == null);
+        const teamStandings = hasNullTeamNames
+          ? deriveTeamStandingsFromDriverStandings(driverStandings, session.session_key)
+          : transformTeamStandings(apiTeamStandings, allDrivers, session.session_key);
+
+        const result: RaceResult = {
+          sessionKey: session.session_key,
+          location: session.location,
+          date: session.date_start,
+          circuitName: session.circuit_short_name,
+          countryName: session.country_name,
+          driverStandings: driverStandings.sort((a, b) => a.position - b.position),
+          teamStandings: teamStandings.sort((a, b) => a.position - b.position),
+        };
+
+        // Update the cache with fresh data
+        await cacheRaceResult(year, result);
+        console.log(`[refreshRaceResult] Updated cache for session ${session.session_key}`);
+      }
+    }
+  } catch (error) {
+    console.warn(`[refreshRaceResult] Failed to refresh session ${session.session_key}:`, error);
+  }
+}
+
 // Batched fetch - gets all race data in one server call
 export const fetchAllRaceData = createServerFn({ method: "GET" })
   .inputValidator((data: { year: number; simulateLive?: boolean }) => data)
@@ -303,29 +391,38 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
         continue;
       }
 
-      // Check KV cache for completed races
-      const isCompleted = isRaceCompleted(session.date_start);
-      if (isCompleted) {
-        const cached = await getRaceResultFromCache(data.year, session.session_key);
-        if (cached) {
-          // Check if cached data has null team names (bad data from old API responses)
-          const hasNullTeamNames = cached.teamStandings.some((t) => t.team_name == null);
-          if (hasNullTeamNames) {
-            // Re-derive team standings from driver standings (which have reliable team names)
-            const fixedTeamStandings = deriveTeamStandingsFromDriverStandings(
-              cached.driverStandings,
-              cached.sessionKey
-            );
-            const fixedResult = { ...cached, teamStandings: fixedTeamStandings };
-            // Update cache with fixed data
-            await cacheRaceResult(data.year, fixedResult);
-            results.push(fixedResult);
-          } else {
-            results.push(cached);
-          }
-          continue;
+      // Check KV cache first (stale-while-revalidate)
+      const cacheResult = await getRaceResultFromCache(data.year, session.session_key);
+      if (cacheResult) {
+        let resultData = cacheResult.data;
+
+        // Check if cached data has null team names (bad data from old API responses)
+        const hasNullTeamNames = resultData.teamStandings.some((t) => t.team_name == null);
+        if (hasNullTeamNames) {
+          // Re-derive team standings from driver standings (which have reliable team names)
+          const fixedTeamStandings = deriveTeamStandingsFromDriverStandings(
+            resultData.driverStandings,
+            resultData.sessionKey
+          );
+          resultData = { ...resultData, teamStandings: fixedTeamStandings };
+          // Update cache with fixed data (fire-and-forget)
+          cacheRaceResult(data.year, resultData).catch(() => {});
         }
+
+        // Always use cached data (stale or not)
+        results.push(resultData);
+
+        // If stale, trigger background refresh (fire-and-forget)
+        // The refresh updates the cache for the next request
+        if (cacheResult.isStale) {
+          refreshRaceResult(session, data.year, localDriverMap).catch(() => {});
+        }
+
+        continue;
       }
+
+      // No cache - only fetch from API for ongoing or recently completed races
+      const isCompleted = isRaceCompleted(session.date_start);
 
       try {
         // Fetch driver standings, team standings, and driver info in parallel

@@ -10,6 +10,42 @@ interface CachedDriverInfo {
   teamColour: string;
 }
 
+// Wrapper for cached race results with metadata
+interface CachedRaceResultEntry {
+  data: RaceResult;
+  cachedAt: number; // timestamp in ms
+}
+
+// Result of cache lookup with staleness info
+export interface CacheResult {
+  data: RaceResult;
+  isStale: boolean;
+  cachedAt: number;
+}
+
+/**
+ * Calculate soft TTL based on race age.
+ * Newer races have shorter TTLs to capture post-race corrections.
+ */
+function getSoftTTL(raceDate: string): number {
+  const ageMs = Date.now() - new Date(raceDate).getTime();
+  const hours = ageMs / (1000 * 60 * 60);
+
+  if (hours < 6) return 5 * 60 * 1000;              // 5 minutes - immediate post-race
+  if (hours < 24) return 30 * 60 * 1000;            // 30 minutes - same day
+  if (hours < 24 * 7) return 4 * 60 * 60 * 1000;    // 4 hours - within a week
+  if (hours < 24 * 30) return 24 * 60 * 60 * 1000;  // 24 hours - within a month
+  return 7 * 24 * 60 * 60 * 1000;                   // 7 days - historical
+}
+
+/**
+ * Calculate hard TTL for KV expiration (2x soft TTL).
+ * This is when KV actually deletes the entry.
+ */
+function getHardTTL(raceDate: string): number {
+  return Math.floor((getSoftTTL(raceDate) * 2) / 1000); // KV uses seconds
+}
+
 // Cached team info structure (extracted from driver data)
 interface CachedTeamInfo {
   name: string;
@@ -121,29 +157,60 @@ export async function getAllCachedTeams(year: number): Promise<string[]> {
   }
 }
 
-// Get race result from KV cache
+// Get race result from KV cache with staleness info
 export async function getRaceResultFromCache(
   year: number,
   sessionKey: number
-): Promise<RaceResult | null> {
+): Promise<CacheResult | null> {
   try {
     const kv = env.F1_RACE_RESULTS;
     if (!kv) return null;
 
     const cached = await kv.get(`race:${year}:${sessionKey}`, "json");
-    return cached as RaceResult | null;
+    if (!cached) return null;
+
+    // Handle both old format (raw RaceResult) and new format (CachedRaceResultEntry)
+    const entry = cached as CachedRaceResultEntry | RaceResult;
+
+    if ("cachedAt" in entry && "data" in entry) {
+      // New format with metadata
+      const softTTL = getSoftTTL(entry.data.date);
+      const age = Date.now() - entry.cachedAt;
+      return {
+        data: entry.data,
+        isStale: age > softTTL,
+        cachedAt: entry.cachedAt,
+      };
+    } else {
+      // Old format - treat as stale to trigger refresh
+      return {
+        data: entry as RaceResult,
+        isStale: true,
+        cachedAt: 0,
+      };
+    }
   } catch {
     return null;
   }
 }
 
-// Store race result in KV cache
+// Store race result in KV cache with metadata and TTL
 export async function cacheRaceResult(year: number, result: RaceResult): Promise<void> {
   try {
     const kv = env.F1_RACE_RESULTS;
     if (!kv) return;
 
-    await kv.put(`race:${year}:${result.sessionKey}`, JSON.stringify(result));
+    const entry: CachedRaceResultEntry = {
+      data: result,
+      cachedAt: Date.now(),
+    };
+
+    const hardTTL = getHardTTL(result.date);
+    await kv.put(
+      `race:${year}:${result.sessionKey}`,
+      JSON.stringify(entry),
+      { expirationTtl: hardTTL }
+    );
   } catch {
     // Silently fail
   }
@@ -153,8 +220,8 @@ export async function cacheRaceResult(year: number, result: RaceResult): Promise
 export async function getCachedRaceResultsForYear(
   year: number,
   sessionKeys: number[]
-): Promise<Map<number, RaceResult>> {
-  const results = new Map<number, RaceResult>();
+): Promise<Map<number, CacheResult>> {
+  const results = new Map<number, CacheResult>();
 
   try {
     const kv = env.F1_RACE_RESULTS;
@@ -164,18 +231,18 @@ export async function getCachedRaceResultsForYear(
     const cached = await Promise.all(
       sessionKeys.map(async (key) => {
         try {
-          const result = await kv.get(`race:${year}:${key}`, "json");
-          return { key, result: result as RaceResult | null };
+          const cacheResult = await getRaceResultFromCache(year, key);
+          return { key, cacheResult };
         } catch {
           // Skip corrupted entries, keep others
-          return { key, result: null };
+          return { key, cacheResult: null };
         }
       })
     );
 
-    for (const { key, result } of cached) {
-      if (result) {
-        results.set(key, result);
+    for (const { key, cacheResult } of cached) {
+      if (cacheResult) {
+        results.set(key, cacheResult);
       }
     }
   } catch {
