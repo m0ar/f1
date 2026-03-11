@@ -9,6 +9,7 @@ import type {
   RaceDataResponse,
   FailedSession,
   UpcomingRace,
+  LiveSession,
 } from "@/types";
 import { transformDriverStandings, transformTeamStandings } from "./transforms";
 import {
@@ -184,6 +185,25 @@ function isRaceCompleted(raceDate: string): boolean {
   return now - raceTime > 3 * 60 * 60 * 1000;
 }
 
+// Check if a race is currently in progress (started but not completed)
+function isRaceOngoing(raceDate: string): boolean {
+  const raceTime = new Date(raceDate).getTime();
+  const now = Date.now();
+  const threeHoursMs = 3 * 60 * 60 * 1000;
+  // Race is ongoing if it has started but hasn't been going for more than 3 hours
+  return now >= raceTime && now - raceTime < threeHoursMs;
+}
+
+// Find the ongoing race session if one exists
+function getOngoingRace(sessions: RaceSession[]): RaceSession | null {
+  for (const session of sessions) {
+    if (isRaceOngoing(session.date_start)) {
+      return session;
+    }
+  }
+  return null;
+}
+
 // Look up a driver by number using the API (searches recent sessions)
 async function lookupDriverByNumber(
   driverNumber: number,
@@ -234,7 +254,7 @@ async function lookupDriverByNumber(
 
 // Batched fetch - gets all race data in one server call
 export const fetchAllRaceData = createServerFn({ method: "GET" })
-  .inputValidator((data: { year: number }) => data)
+  .inputValidator((data: { year: number; simulateLive?: boolean }) => data)
   .handler(async ({ data }): Promise<RaceDataResponse> => {
     // Get sessions (in-memory cache is fine here - cheap to refetch)
     let sessions: RaceSession[];
@@ -378,5 +398,207 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
       }
     }
 
-    return { results, upcomingRaces, failedSessions, totalRaces: sessions.length };
+    // Check if there's a race currently in progress
+    let ongoingRace = getOngoingRace(sessions);
+
+    // DEV: Simulate live mode by treating the last completed race as ongoing
+    if (data.simulateLive && !ongoingRace && results.length > 0) {
+      const lastResult = results[results.length - 1];
+      ongoingRace = sessions.find((s) => s.session_key === lastResult.sessionKey) ?? null;
+    }
+
+    const liveSession: LiveSession | undefined = ongoingRace
+      ? {
+          sessionKey: ongoingRace.session_key,
+          location: ongoingRace.location,
+          circuitName: ongoingRace.circuit_short_name,
+          countryName: ongoingRace.country_name,
+          raceStartTime: ongoingRace.date_start,
+        }
+      : undefined;
+
+    return { results, upcomingRaces, failedSessions, totalRaces: sessions.length, liveSession };
+  });
+
+// Lightweight fetch for just a single live race session
+// Used for polling during an ongoing race without refetching all historical data
+// Assumes drivers are already cached from the initial fetchAllRaceData call
+export const fetchLiveRaceData = createServerFn({ method: "GET" })
+  .inputValidator((data: { sessionKey: number; year: number; simulateLive?: boolean }) => data)
+  .handler(async ({ data }): Promise<RaceResult | null> => {
+    try {
+      // Fetch only championship data - driver info should be cached from initial load
+      const [driverChampResponse, teamChampResponse] = await Promise.all([
+        authenticatedFetch(
+          `${BASE_URL}/championship_drivers?session_key=${data.sessionKey}`
+        ),
+        authenticatedFetch(
+          `${BASE_URL}/championship_teams?session_key=${data.sessionKey}`
+        ),
+      ]);
+
+      if (!driverChampResponse.ok || !teamChampResponse.ok) {
+        console.warn(`Failed to fetch live data for session ${data.sessionKey}`);
+        return null;
+      }
+
+      const apiDriverStandings: ApiDriverChampionship[] = await driverChampResponse.json();
+      const apiTeamStandings: ApiTeamChampionship[] = await teamChampResponse.json();
+
+      if (apiDriverStandings.length === 0 && apiTeamStandings.length === 0) {
+        return null;
+      }
+
+      // Get all drivers from KV cache (populated by initial fetchAllRaceData)
+      const localDriverMap = new Map<number, ApiDriver>();
+      const driverNumbers = apiDriverStandings.map((s) => s.driver_number);
+
+      const cachedLookups = await Promise.all(
+        driverNumbers.map(async (num) => {
+          const cached = await getDriverFromCache(data.year, num);
+          return cached ? { num, cached } : null;
+        })
+      );
+
+      for (const result of cachedLookups) {
+        if (result) {
+          localDriverMap.set(result.num, {
+            driver_number: result.num,
+            first_name: result.cached.firstName,
+            last_name: result.cached.lastName,
+            name_acronym: result.cached.acronym,
+            team_name: result.cached.teamName,
+            team_colour: result.cached.teamColour || "",
+            meeting_key: 0,
+            session_key: data.sessionKey,
+            broadcast_name: `${result.cached.firstName} ${result.cached.lastName}`,
+            full_name: `${result.cached.firstName} ${result.cached.lastName}`,
+            headshot_url: "",
+            country_code: null,
+          });
+        }
+      }
+
+      // If any drivers are missing from cache, fetch from API
+      const missingDriverNumbers = driverNumbers.filter((num) => !localDriverMap.has(num));
+      if (missingDriverNumbers.length > 0) {
+        const driversResponse = await authenticatedFetch(
+          `${BASE_URL}/drivers?session_key=${data.sessionKey}`
+        );
+        if (driversResponse.ok) {
+          const sessionDrivers: ApiDriver[] = await driversResponse.json();
+          await cacheDriversFromApi(data.year, sessionDrivers);
+          for (const driver of sessionDrivers) {
+            localDriverMap.set(driver.driver_number, driver);
+          }
+        }
+
+        // Some drivers might not be in this session (reserves, etc.)
+        // Look them up across all sessions
+        const stillMissing = driverNumbers.filter((num) => !localDriverMap.has(num));
+        if (stillMissing.length > 0) {
+          const lookups = await Promise.all(
+            stillMissing.map((num) => lookupDriverByNumber(num, data.year))
+          );
+          for (const driver of lookups) {
+            if (driver) {
+              localDriverMap.set(driver.driver_number, driver);
+            }
+          }
+        }
+      }
+
+      const allDrivers = Array.from(localDriverMap.values());
+      let driverStandings = transformDriverStandings(
+        apiDriverStandings,
+        allDrivers,
+        data.sessionKey,
+        { skipMissing: true } // Don't fail on missing drivers during live updates
+      );
+      const teamStandings = transformTeamStandings(
+        apiTeamStandings,
+        allDrivers,
+        data.sessionKey
+      );
+
+      // DEV: Simulate random overtake by swapping two adjacent drivers
+      // Points stay with position (like real API during live race)
+      if (data.simulateLive && driverStandings.length >= 2) {
+        // Pick a random position (not the last one, so we can swap with next)
+        const swapIndex = Math.floor(Math.random() * (driverStandings.length - 1));
+        const driverA = driverStandings[swapIndex];
+        const driverB = driverStandings[swapIndex + 1];
+
+        // Swap driver identities but keep position and points tied to the position
+        driverStandings = driverStandings.map((driver, idx) => {
+          if (idx === swapIndex) {
+            return {
+              ...driverB,
+              position: driverA.position,
+              points: driverA.points, // Points stay with position
+            };
+          }
+          if (idx === swapIndex + 1) {
+            return {
+              ...driverA,
+              position: driverB.position,
+              points: driverB.points, // Points stay with position
+            };
+          }
+          return driver;
+        });
+
+        console.log(
+          `[simulateLive] Swapped P${swapIndex + 1} and P${swapIndex + 2}: ` +
+          `${driverA.driver_name_acronym} (now P${swapIndex + 2}) <-> ` +
+          `${driverB.driver_name_acronym} (now P${swapIndex + 1})`
+        );
+
+        // Recalculate team standings based on updated driver points
+        const teamPointsMap = new Map<string, number>();
+        const teamColorsMap = new Map<string, string>();
+
+        for (const driver of driverStandings) {
+          const currentPoints = teamPointsMap.get(driver.team_name) || 0;
+          teamPointsMap.set(driver.team_name, currentPoints + driver.points);
+          if (!teamColorsMap.has(driver.team_name)) {
+            teamColorsMap.set(driver.team_name, driver.team_colour);
+          }
+        }
+
+        // Convert to array and sort by points descending
+        const recalculatedTeams = Array.from(teamPointsMap.entries())
+          .map(([teamName, points]) => ({
+            team_name: teamName,
+            team_colour: teamColorsMap.get(teamName) || "",
+            points,
+            session_key: data.sessionKey,
+            position: 0, // Will be set below
+          }))
+          .sort((a, b) => b.points - a.points)
+          .map((team, idx) => ({ ...team, position: idx + 1 }));
+
+        // Replace team standings with recalculated values
+        teamStandings.length = 0;
+        teamStandings.push(...recalculatedTeams);
+      }
+
+      // Session metadata should be in the in-memory cache from initial load
+      const sessionInfo = sessionsCache.get(data.year)?.sessions.find(
+        (s) => s.session_key === data.sessionKey
+      );
+
+      return {
+        sessionKey: data.sessionKey,
+        location: sessionInfo?.location ?? "Unknown",
+        date: sessionInfo?.date_start ?? new Date().toISOString(),
+        circuitName: sessionInfo?.circuit_short_name ?? "Unknown",
+        countryName: sessionInfo?.country_name ?? "Unknown",
+        driverStandings: driverStandings.sort((a, b) => a.position - b.position),
+        teamStandings: teamStandings.sort((a, b) => a.position - b.position),
+      };
+    } catch (error) {
+      console.error(`Error fetching live race data for session ${data.sessionKey}:`, error);
+      return null;
+    }
   });

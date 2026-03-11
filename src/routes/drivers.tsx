@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Radio } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -21,20 +21,44 @@ import {
   validateBets,
 } from "@/lib/scoring";
 import { getBetsForYear } from "@/lib/bets";
-import type { RaceResult, FailedSession, BetMismatch } from "@/types";
+import type { BetMismatch, RaceDataResponse } from "@/types";
+import { useLiveRaceData } from "@/hooks/useLiveRaceData";
+import { Badge } from "@/components/ui/badge";
+import { ChartRangeFilter, sliceByRange } from "@/components/chart-range-filter";
 
 export const Route = createFileRoute("/drivers")({
   component: DriversPage,
 });
 
+// Empty response for initial state
+const emptyResponse: RaceDataResponse = {
+  results: [],
+  upcomingRaces: [],
+  failedSessions: [],
+  totalRaces: 0,
+};
+
 function DriversPage() {
   const selectedYear = usePreferences((state) => state.selectedYear);
+  const simulateLive = usePreferences((state) => state.simulateLive);
+  const chartRaceRange = usePreferences((state) => state.chartRaceRange);
+  const setChartRaceRange = usePreferences((state) => state.setChartRaceRange);
   const hasHydrated = useHasHydrated();
-  const [raceResults, setRaceResults] = useState<RaceResult[]>([]);
-  const [failedSessions, setFailedSessions] = useState<FailedSession[]>([]);
+  const [initialResponse, setInitialResponse] = useState<RaceDataResponse>(emptyResponse);
   const [betMismatches, setBetMismatches] = useState<BetMismatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Use live race data hook for polling during ongoing races
+  const { data: raceData, isLive, lastUpdated } = useLiveRaceData(
+    initialResponse,
+    selectedYear,
+    { enabled: hasHydrated && !loading, simulateLive }
+  );
+
+  // Destructure for convenience
+  const raceResults = raceData.results;
+  const failedSessions = raceData.failedSessions;
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -42,12 +66,10 @@ function DriversPage() {
     async function loadData() {
       setLoading(true);
       setError(null);
-      setFailedSessions([]);
       setBetMismatches([]);
       try {
-        const response = await fetchRaceResults(selectedYear);
-        setRaceResults(response.results);
-        setFailedSessions(response.failedSessions);
+        const response = await fetchRaceResults(selectedYear, { simulateLive });
+        setInitialResponse(response);
 
         // Validate bets against canonical names
         const betsForValidation = getBetsForYear(selectedYear);
@@ -60,7 +82,7 @@ function DriversPage() {
       }
     }
     loadData();
-  }, [selectedYear, hasHydrated]);
+  }, [selectedYear, hasHydrated, simulateLive]);
 
   if (loading) {
     return (
@@ -95,11 +117,24 @@ function DriversPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Driver Standings</h1>
-        <p className="text-sm sm:text-base text-muted-foreground">
-          Track betting performance and championship points for drivers
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Driver Standings</h1>
+          <p className="text-sm sm:text-base text-muted-foreground">
+            Track betting performance and championship points for drivers
+            {isLive && lastUpdated && (
+              <span className="text-xs ml-2 opacity-70">
+                · Updated {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
+          </p>
+        </div>
+        {isLive && (
+          <Badge variant="destructive" className="text-sm w-fit animate-pulse flex items-center gap-1">
+            <Radio className="h-3 w-3" />
+            LIVE
+          </Badge>
+        )}
       </div>
 
       {failedSessions.length > 0 && (
@@ -144,6 +179,16 @@ function DriversPage() {
         </Card>
       )}
 
+      {hasRaceData && betChartData.length > 3 && (
+        <div className="flex justify-end">
+          <ChartRangeFilter
+            value={chartRaceRange}
+            onChange={setChartRaceRange}
+            totalRaces={betChartData.length}
+          />
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Driver Bet Scores</CardTitle>
@@ -154,7 +199,7 @@ function DriversPage() {
         </CardHeader>
         <CardContent>
           <BetChart
-            data={betChartData}
+            data={sliceByRange(betChartData, chartRaceRange)}
             participants={participants}
             title="Bet Difference Over Season"
           />
@@ -171,7 +216,7 @@ function DriversPage() {
         </CardHeader>
         <CardContent>
           <PointsChart
-            data={pointsChartData}
+            data={sliceByRange(pointsChartData, chartRaceRange)}
             entities={drivers}
             title="Championship Points Over Season"
             colors={driverColors}

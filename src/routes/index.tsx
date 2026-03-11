@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "motion/react";
-import { Trophy, TrendingUp, TrendingDown, Minus, Eye, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
+import { Trophy, TrendingUp, TrendingDown, Minus, Eye, AlertTriangle, ChevronLeft, ChevronRight, Radio } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -23,24 +23,44 @@ import { usePreferences, useHasHydrated } from "@/stores/preferences";
 import { fetchRaceResults } from "@/lib/api";
 import { getLeaderboard, validateBets } from "@/lib/scoring";
 import { getBetsForYear } from "@/lib/bets";
-import type { RaceResult, ParticipantScore, FailedSession, BetMismatch, UpcomingRace } from "@/types";
+import type { ParticipantScore, BetMismatch, RaceDataResponse } from "@/types";
+import { useLiveRaceData } from "@/hooks/useLiveRaceData";
 
 export const Route = createFileRoute("/")({
   component: LeaderboardPage,
 });
 
+// Empty response for initial state
+const emptyResponse: RaceDataResponse = {
+  results: [],
+  upcomingRaces: [],
+  failedSessions: [],
+  totalRaces: 0,
+};
+
 function LeaderboardPage() {
   const selectedYear = usePreferences((state) => state.selectedYear);
+  const simulateLive = usePreferences((state) => state.simulateLive);
   const hasHydrated = useHasHydrated();
-  const [raceResults, setRaceResults] = useState<RaceResult[]>([]);
-  const [upcomingRaces, setUpcomingRaces] = useState<UpcomingRace[]>([]);
+  const [initialResponse, setInitialResponse] = useState<RaceDataResponse>(emptyResponse);
   const [selectedRaceIndex, setSelectedRaceIndex] = useState<number | null>(null);
-  const [totalRaces, setTotalRaces] = useState<number>(0);
-  const [failedSessions, setFailedSessions] = useState<FailedSession[]>([]);
   const [betMismatches, setBetMismatches] = useState<BetMismatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedParticipant, setSelectedParticipant] = useState<string | null>(null);
+
+  // Use live race data hook for polling during ongoing races
+  const { data: raceData, isLive, lastUpdated } = useLiveRaceData(
+    initialResponse,
+    selectedYear,
+    { enabled: hasHydrated && !loading, simulateLive }
+  );
+
+  // Destructure for convenience
+  const raceResults = raceData.results;
+  const upcomingRaces = raceData.upcomingRaces;
+  const failedSessions = raceData.failedSessions;
+  const totalRaces = raceData.totalRaces;
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -48,14 +68,10 @@ function LeaderboardPage() {
     async function loadData() {
       setLoading(true);
       setError(null);
-      setFailedSessions([]);
       setBetMismatches([]);
       try {
-        const response = await fetchRaceResults(selectedYear);
-        setRaceResults(response.results);
-        setUpcomingRaces(response.upcomingRaces);
-        setTotalRaces(response.totalRaces);
-        setFailedSessions(response.failedSessions);
+        const response = await fetchRaceResults(selectedYear, { simulateLive });
+        setInitialResponse(response);
         // Default to the latest completed race
         if (response.results.length > 0) {
           setSelectedRaceIndex(response.results.length - 1);
@@ -74,7 +90,7 @@ function LeaderboardPage() {
       }
     }
     loadData();
-  }, [selectedYear, hasHydrated]);
+  }, [selectedYear, hasHydrated, simulateLive]);
 
   // Keyboard navigation for races (left/right arrows)
   const handleKeyDown = useCallback(
@@ -159,11 +175,24 @@ function LeaderboardPage() {
             {hasRaceData && selectedResult
               ? `Standings after ${selectedResult.circuitName} (${selectedResult.countryName})`
               : `Waiting for ${selectedYear} season to begin`}
+            {isLive && lastUpdated && (
+              <span className="text-xs ml-2 opacity-70">
+                · Updated {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
           </p>
         </div>
-        <Badge variant="outline" className="text-sm w-fit">
-          {raceResults.length} / {totalRaces} races
-        </Badge>
+        <div className="flex items-center gap-2">
+          {isLive && (
+            <Badge variant="destructive" className="text-sm w-fit animate-pulse flex items-center gap-1">
+              <Radio className="h-3 w-3" />
+              LIVE
+            </Badge>
+          )}
+          <Badge variant="outline" className="text-sm w-fit">
+            {raceResults.length} / {totalRaces} races
+          </Badge>
+        </div>
       </div>
 
       {failedSessions.length > 0 && (
@@ -311,16 +340,20 @@ function LeaderboardPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
-            {raceResults.map((result, index) => (
-              <Badge
-                key={result.sessionKey}
-                variant={index === selectedRaceIndex ? "default" : "secondary"}
-                className="cursor-pointer hover:opacity-80 transition-opacity"
-                onClick={() => setSelectedRaceIndex(index)}
-              >
-                {result.circuitName}
-              </Badge>
-            ))}
+            {raceResults.map((result, index) => {
+              const isLiveRace = raceData.liveSession?.sessionKey === result.sessionKey;
+              return (
+                <Badge
+                  key={result.sessionKey}
+                  variant={index === selectedRaceIndex ? "default" : "secondary"}
+                  className={`cursor-pointer hover:opacity-80 transition-opacity ${isLiveRace ? "ring-2 ring-red-500 ring-offset-1" : ""}`}
+                  onClick={() => setSelectedRaceIndex(index)}
+                >
+                  {isLiveRace && <Radio className="h-3 w-3 mr-1" />}
+                  {result.circuitName}
+                </Badge>
+              );
+            })}
             {upcomingRaces.map((race) => (
               <Badge
                 key={race.sessionKey}

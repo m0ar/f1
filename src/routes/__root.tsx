@@ -14,6 +14,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { YearSelector } from "@/components/year-selector";
+import { DevSettings } from "@/components/dev-settings";
 import { usePreferences } from "@/stores/preferences";
 import appCss from "@/styles.css?url";
 
@@ -69,6 +70,7 @@ function RootComponent() {
             <Outlet />
           </main>
         </div>
+        <DevSettings />
       </TooltipProvider>
     </RootDocument>
   );

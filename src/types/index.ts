@@ -147,12 +147,23 @@ export interface UpcomingRace {
   countryName: string;
 }
 
+// Live session info (race currently in progress)
+export interface LiveSession {
+  sessionKey: number;
+  location: string;
+  circuitName: string;
+  countryName: string;
+  raceStartTime: string;
+}
+
 // Response from race data fetch including any failures
 export interface RaceDataResponse {
   results: RaceResult[];
   upcomingRaces: UpcomingRace[];
   failedSessions: FailedSession[];
   totalRaces: number;
+  /** Present if a race is currently in progress */
+  liveSession?: LiveSession;
 }
 
 // Bet validation types
