@@ -182,26 +182,86 @@ async function authenticatedFetch(url: string, retries = 3): Promise<Response> {
 const sessionsCache = new Map<number, { sessions: RaceSession[]; timestamp: number }>();
 const SESSIONS_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
-function isRaceCompleted(raceDate: string): boolean {
-  const raceTime = new Date(raceDate).getTime();
-  const now = Date.now();
-  // Consider a race "completed" if it started more than 3 hours ago
-  return now - raceTime > 3 * 60 * 60 * 1000;
+// Session status from race_control API
+type SessionStatus = "not_started" | "started" | "finished" | "aborted";
+
+// In-memory cache for session status (short-lived, per-request batch)
+const sessionStatusCache = new Map<number, SessionStatus>();
+
+// Fetch session status from race_control API
+async function getSessionStatus(sessionKey: number): Promise<SessionStatus> {
+  // Check in-memory cache first
+  const cached = sessionStatusCache.get(sessionKey);
+  if (cached) return cached;
+
+  try {
+    const response = await authenticatedFetch(
+      `${BASE_URL}/race_control?session_key=${sessionKey}&category=SessionStatus`
+    );
+
+    if (!response.ok) {
+      // If API fails, fall back to "not_started" (will trigger fresh fetch)
+      return "not_started";
+    }
+
+    const events: { message: string }[] = await response.json();
+
+    // Check for terminal states (most recent event wins)
+    let status: SessionStatus = "not_started";
+    for (const event of events) {
+      if (event.message === "SESSION FINISHED") {
+        status = "finished";
+      } else if (event.message === "SESSION ABORTED") {
+        status = "aborted";
+      } else if (event.message === "SESSION STARTED") {
+        status = "started";
+      }
+    }
+
+    // Cache the result
+    sessionStatusCache.set(sessionKey, status);
+    return status;
+  } catch {
+    return "not_started";
+  }
 }
 
-// Check if a race is currently in progress (started but not completed)
-function isRaceOngoing(raceDate: string): boolean {
+// Check if a race is completed (finished or aborted)
+async function isRaceCompleted(sessionKey: number, raceDate: string): Promise<boolean> {
+  // For races more than 24 hours old, assume completed (avoid API call)
+  const ageMs = Date.now() - new Date(raceDate).getTime();
+  if (ageMs > 24 * 60 * 60 * 1000) {
+    return true;
+  }
+
+  // For recent races, check actual status
+  const status = await getSessionStatus(sessionKey);
+  return status === "finished" || status === "aborted";
+}
+
+// Check if a race is currently in progress
+async function isRaceOngoing(sessionKey: number, raceDate: string): Promise<boolean> {
   const raceTime = new Date(raceDate).getTime();
   const now = Date.now();
-  const threeHoursMs = 3 * 60 * 60 * 1000;
-  // Race is ongoing if it has started but hasn't been going for more than 3 hours
-  return now >= raceTime && now - raceTime < threeHoursMs;
+
+  // Race can't be ongoing if it hasn't started yet
+  if (now < raceTime) return false;
+
+  // For races more than 6 hours old, assume not ongoing
+  const ageMs = now - raceTime;
+  if (ageMs > 6 * 60 * 60 * 1000) {
+    return false;
+  }
+
+  // Check actual status
+  const status = await getSessionStatus(sessionKey);
+  return status === "started";
 }
 
 // Find the ongoing race session if one exists
-function getOngoingRace(sessions: RaceSession[]): RaceSession | null {
+async function getOngoingRace(sessions: RaceSession[]): Promise<RaceSession | null> {
   for (const session of sessions) {
-    if (isRaceOngoing(session.date_start)) {
+    if (await isRaceOngoing(session.session_key, session.date_start)) {
       return session;
     }
   }
@@ -421,8 +481,8 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
         continue;
       }
 
-      // No cache - only fetch from API for ongoing or recently completed races
-      const isCompleted = isRaceCompleted(session.date_start);
+      // No cache - fetch from API and cache if completed
+      const isCompleted = await isRaceCompleted(session.session_key, session.date_start);
 
       try {
         // Fetch driver standings, team standings, and driver info in parallel
@@ -516,7 +576,7 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
     }
 
     // Check if there's a race currently in progress
-    let ongoingRace = getOngoingRace(sessions);
+    let ongoingRace = await getOngoingRace(sessions);
 
     // DEV: Simulate live mode by treating the last completed race as ongoing
     if (data.simulateLive && !ongoingRace && results.length > 0) {
