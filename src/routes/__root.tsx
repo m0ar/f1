@@ -8,6 +8,7 @@ import {
   Scripts,
   useRouterState,
 } from "@tanstack/react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -17,6 +18,33 @@ import { YearSelector } from "@/components/year-selector";
 import { DevSettings } from "@/components/dev-settings";
 import { usePreferences } from "@/stores/preferences";
 import appCss from "@/styles.css?url";
+
+// Create a client - using useState to ensure it's created once per app instance
+function makeQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        // With SSR, we want to avoid refetching immediately on the client
+        staleTime: 30_000,
+        // Don't retry on error during development
+        retry: process.env.NODE_ENV === "production" ? 3 : false,
+      },
+    },
+  });
+}
+
+let browserQueryClient: QueryClient | undefined = undefined;
+
+function getQueryClient() {
+  if (typeof window === "undefined") {
+    // Server: always make a new query client
+    return makeQueryClient();
+  } else {
+    // Browser: make a new query client if we don't already have one
+    if (!browserQueryClient) browserQueryClient = makeQueryClient();
+    return browserQueryClient;
+  }
+}
 
 export const Route = createRootRoute({
   head: () => ({
@@ -50,6 +78,7 @@ function NotFound() {
 function RootComponent() {
   const theme = usePreferences((state) => state.theme);
   const [isClient, setIsClient] = useState(false);
+  const queryClient = getQueryClient();
 
   useEffect(() => {
     setIsClient(true);
@@ -63,15 +92,17 @@ function RootComponent() {
 
   return (
     <RootDocument>
-      <TooltipProvider>
-        <div className="flex min-h-screen flex-col">
-          <Header />
-          <main className="flex-1 container mx-auto px-4 py-4 md:py-6">
-            <Outlet />
-          </main>
-        </div>
-        <DevSettings />
-      </TooltipProvider>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <div className="flex min-h-screen flex-col">
+            <Header />
+            <main className="flex-1 container mx-auto px-4 py-4 md:py-6">
+              <Outlet />
+            </main>
+          </div>
+          <DevSettings />
+        </TooltipProvider>
+      </QueryClientProvider>
     </RootDocument>
   );
 }

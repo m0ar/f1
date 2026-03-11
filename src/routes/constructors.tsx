@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 import { AlertTriangle, Radio } from "lucide-react";
 import {
   Card,
@@ -11,7 +10,6 @@ import {
 import { BetChart } from "@/components/charts/bet-chart";
 import { PointsChart } from "@/components/charts/points-chart";
 import { usePreferences, useHasHydrated } from "@/stores/preferences";
-import { fetchRaceResults } from "@/lib/api";
 import {
   calculateScoreHistory,
   getConstructorBetChartData,
@@ -21,8 +19,7 @@ import {
   validateBets,
 } from "@/lib/scoring";
 import { getBetsForYear } from "@/lib/bets";
-import type { BetMismatch, RaceDataResponse } from "@/types";
-import { useLiveRaceData } from "@/hooks/useLiveRaceData";
+import { useLiveRaceData } from "@/hooks/useRaceData";
 import { Badge } from "@/components/ui/badge";
 import { ChartRangeFilter, sliceByRange } from "@/components/chart-range-filter";
 
@@ -30,66 +27,28 @@ export const Route = createFileRoute("/constructors")({
   component: ConstructorsPage,
 });
 
-// Empty response for initial state
-const emptyResponse: RaceDataResponse = {
-  results: [],
-  upcomingRaces: [],
-  failedSessions: [],
-  totalRaces: 0,
-};
-
 function ConstructorsPage() {
   const selectedYear = usePreferences((state) => state.selectedYear);
   const simulateLive = usePreferences((state) => state.simulateLive);
   const chartRaceRange = usePreferences((state) => state.chartRaceRange);
   const setChartRaceRange = usePreferences((state) => state.setChartRaceRange);
   const hasHydrated = useHasHydrated();
-  const [initialResponse, setInitialResponse] = useState<RaceDataResponse>(emptyResponse);
-  const [dataYear, setDataYear] = useState<number | null>(null); // Track which year the data is for
-  const [betMismatches, setBetMismatches] = useState<BetMismatch[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  // Use live race data hook for polling during ongoing races
-  const { data: raceData, isLive, lastUpdated } = useLiveRaceData(
-    initialResponse,
+  // Use TanStack Query for data fetching with live polling
+  const { data: raceData, isLoading, error, isLive, lastUpdated } = useLiveRaceData(
     selectedYear,
-    { enabled: hasHydrated && !loading, simulateLive }
+    { enabled: hasHydrated, simulateLive }
   );
 
   // Destructure for convenience
-  const raceResults = raceData.results;
-  const failedSessions = raceData.failedSessions;
+  const raceResults = raceData?.results ?? [];
+  const failedSessions = raceData?.failedSessions ?? [];
 
-  useEffect(() => {
-    if (!hasHydrated) return;
+  // Compute bet mismatches
+  const bets = getBetsForYear(selectedYear);
+  const betMismatches = validateBets(bets, raceResults).mismatches;
 
-    async function loadData() {
-      setLoading(true);
-      setError(null);
-      setBetMismatches([]);
-      try {
-        const response = await fetchRaceResults(selectedYear, { simulateLive });
-        setInitialResponse(response);
-        setDataYear(selectedYear); // Track which year this data is for
-
-        // Validate bets against canonical names
-        const betsForValidation = getBetsForYear(selectedYear);
-        const validation = validateBets(betsForValidation, response.results);
-        setBetMismatches(validation.mismatches);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load data");
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, [selectedYear, hasHydrated, simulateLive]);
-
-  // Show loading if data is loading OR if data year doesn't match selected year
-  // This prevents showing stale data while the useEffect refetches
-  const isDataStale = dataYear !== null && dataYear !== selectedYear;
-  if (loading || isDataStale) {
+  if (!hasHydrated || isLoading) {
     return (
       <div className="flex items-center justify-center h-[50vh]">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -103,14 +62,15 @@ function ConstructorsPage() {
         <Card className="max-w-md">
           <CardHeader>
             <CardTitle className="text-destructive">Error</CardTitle>
-            <CardDescription>{error}</CardDescription>
+            <CardDescription>
+              {error instanceof Error ? error.message : "Failed to load data"}
+            </CardDescription>
           </CardHeader>
         </Card>
       </div>
     );
   }
 
-  const bets = getBetsForYear(selectedYear);
   const participants = Object.keys(bets);
   const hasRaceData = raceResults.length > 0;
 

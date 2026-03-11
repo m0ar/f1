@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { motion } from "motion/react";
 import { Trophy, TrendingUp, TrendingDown, Minus, Eye, AlertTriangle, ChevronLeft, ChevronRight, Radio } from "lucide-react";
 import {
@@ -20,85 +20,57 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { ParticipantDetail } from "@/components/participant-detail";
 import { usePreferences, useHasHydrated } from "@/stores/preferences";
-import { fetchRaceResults } from "@/lib/api";
-import { getLeaderboard, validateBets, checkDataQuality, type DataQualityIssue } from "@/lib/scoring";
+import { getLeaderboard, validateBets, checkDataQuality } from "@/lib/scoring";
 import { getBetsForYear } from "@/lib/bets";
-import type { ParticipantScore, BetMismatch, RaceDataResponse } from "@/types";
-import { useLiveRaceData } from "@/hooks/useLiveRaceData";
+import type { ParticipantScore } from "@/types";
+import { useLiveRaceData } from "@/hooks/useRaceData";
 
 export const Route = createFileRoute("/")({
   component: LeaderboardPage,
 });
 
-// Empty response for initial state
-const emptyResponse: RaceDataResponse = {
-  results: [],
-  upcomingRaces: [],
-  failedSessions: [],
-  totalRaces: 0,
-};
-
 function LeaderboardPage() {
   const selectedYear = usePreferences((state) => state.selectedYear);
   const simulateLive = usePreferences((state) => state.simulateLive);
   const hasHydrated = useHasHydrated();
-  const [initialResponse, setInitialResponse] = useState<RaceDataResponse>(emptyResponse);
-  const [dataYear, setDataYear] = useState<number | null>(null); // Track which year the data is for
+
   const [selectedRaceIndex, setSelectedRaceIndex] = useState<number | null>(null);
-  const [betMismatches, setBetMismatches] = useState<BetMismatch[]>([]);
-  const [dataQualityIssues, setDataQualityIssues] = useState<DataQualityIssue[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [selectedParticipant, setSelectedParticipant] = useState<string | null>(null);
 
-  // Use live race data hook for polling during ongoing races
-  const { data: raceData, isLive, lastUpdated } = useLiveRaceData(
-    initialResponse,
+  // Use TanStack Query for data fetching with live polling
+  const { data: raceData, isLoading, error, isLive, lastUpdated } = useLiveRaceData(
     selectedYear,
-    { enabled: hasHydrated && !loading, simulateLive }
+    { enabled: hasHydrated, simulateLive }
   );
 
   // Destructure for convenience
-  const raceResults = raceData.results;
-  const upcomingRaces = raceData.upcomingRaces;
-  const failedSessions = raceData.failedSessions;
-  const totalRaces = raceData.totalRaces;
+  const raceResults = raceData?.results ?? [];
+  const upcomingRaces = raceData?.upcomingRaces ?? [];
+  const failedSessions = raceData?.failedSessions ?? [];
+  const totalRaces = raceData?.totalRaces ?? 0;
 
+  // Set selected race index when data loads
   useEffect(() => {
-    if (!hasHydrated) return;
-
-    async function loadData() {
-      setLoading(true);
-      setError(null);
-      setBetMismatches([]);
-      setDataQualityIssues([]);
-      try {
-        const response = await fetchRaceResults(selectedYear, { simulateLive });
-        setInitialResponse(response);
-        setDataYear(selectedYear); // Track which year this data is for
-        // Default to the latest completed race
-        if (response.results.length > 0) {
-          setSelectedRaceIndex(response.results.length - 1);
-        } else {
-          setSelectedRaceIndex(null);
-        }
-
-        // Check data quality
-        const qualityIssues = checkDataQuality(response.results);
-        setDataQualityIssues(qualityIssues);
-
-        // Validate bets against canonical names
-        const betsForValidation = getBetsForYear(selectedYear);
-        const validation = validateBets(betsForValidation, response.results);
-        setBetMismatches(validation.mismatches);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load data");
-      } finally {
-        setLoading(false);
-      }
+    if (raceResults.length > 0 && selectedRaceIndex === null) {
+      setSelectedRaceIndex(raceResults.length - 1);
     }
-    loadData();
-  }, [selectedYear, hasHydrated, simulateLive]);
+  }, [raceResults.length, selectedRaceIndex]);
+
+  // Reset race index when year changes
+  useEffect(() => {
+    setSelectedRaceIndex(null);
+  }, [selectedYear]);
+
+  // Compute data quality issues and bet mismatches
+  const bets = getBetsForYear(selectedYear);
+  const dataQualityIssues = useMemo(
+    () => checkDataQuality(raceResults),
+    [raceResults]
+  );
+  const betMismatches = useMemo(
+    () => validateBets(bets, raceResults).mismatches,
+    [bets, raceResults]
+  );
 
   // Keyboard navigation for races (left/right arrows)
   const handleKeyDown = useCallback(
@@ -121,12 +93,7 @@ function LeaderboardPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  const bets = getBetsForYear(selectedYear);
-
-  // Show loading if data is loading OR if data year doesn't match selected year
-  // This prevents showing stale data while the useEffect refetches
-  const isDataStale = dataYear !== null && dataYear !== selectedYear;
-  if (loading || isDataStale) {
+  if (!hasHydrated || isLoading) {
     return (
       <div className="flex items-center justify-center h-[50vh]">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -140,7 +107,9 @@ function LeaderboardPage() {
         <Card className="max-w-md">
           <CardHeader>
             <CardTitle className="text-destructive">Error</CardTitle>
-            <CardDescription>{error}</CardDescription>
+            <CardDescription>
+              {error instanceof Error ? error.message : "Failed to load data"}
+            </CardDescription>
           </CardHeader>
         </Card>
       </div>
@@ -174,7 +143,6 @@ function LeaderboardPage() {
 
   const leaderboard = selectedResult ? getLeaderboard(bets, selectedResult) : null;
   const previousLeaderboard = previousResult ? getLeaderboard(bets, previousResult) : null;
-
   const participants = Object.keys(bets);
 
   return (
@@ -371,7 +339,7 @@ function LeaderboardPage() {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
             {raceResults.map((result, index) => {
-              const isLiveRace = raceData.liveSession?.sessionKey === result.sessionKey;
+              const isLiveRace = raceData?.liveSession?.sessionKey === result.sessionKey;
               return (
                 <Badge
                   key={result.sessionKey}

@@ -13,6 +13,7 @@
     "debug:trace": "tsx scripts/debug.ts --trace"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-router": "^1.166.2",
     "@tanstack/react-start": "^1.166.2",
     "class-variance-authority": "^0.7.1",
