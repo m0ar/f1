@@ -54,6 +54,8 @@ export function transformDriverStandings(
 }
 
 // Transform API team championship data to app format
+// Only use when API team standings have valid team names
+// For unreliable data, use deriveTeamStandingsFromDriverStandings instead
 export function transformTeamStandings(
   apiStandings: ApiTeamChampionship[],
   drivers: ApiDriver[],
@@ -72,6 +74,38 @@ export function transformTeamStandings(
     team_name: standing.team_name,
     team_colour: teamColors.get(standing.team_name) || "",
     points: standing.points_current,
+    session_key: sessionKey,
+  }));
+}
+
+// Better approach: derive team standings from already-transformed driver standings
+export function deriveTeamStandingsFromDriverStandings(
+  driverStandings: DriverStanding[],
+  sessionKey: number
+): TeamStanding[] {
+  // Aggregate points by team
+  const teamData = new Map<string, { color: string; points: number }>();
+
+  for (const driver of driverStandings) {
+    const existing = teamData.get(driver.team_name);
+    if (existing) {
+      existing.points += driver.points;
+    } else {
+      teamData.set(driver.team_name, {
+        color: driver.team_colour,
+        points: driver.points,
+      });
+    }
+  }
+
+  // Sort by points descending
+  const sorted = Array.from(teamData.entries()).sort((a, b) => b[1].points - a[1].points);
+
+  return sorted.map(([name, info], index) => ({
+    position: index + 1,
+    team_name: name,
+    team_colour: info.color,
+    points: info.points,
     session_key: sessionKey,
   }));
 }

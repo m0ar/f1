@@ -45,6 +45,7 @@ function ConstructorsPage() {
   const setChartRaceRange = usePreferences((state) => state.setChartRaceRange);
   const hasHydrated = useHasHydrated();
   const [initialResponse, setInitialResponse] = useState<RaceDataResponse>(emptyResponse);
+  const [dataYear, setDataYear] = useState<number | null>(null); // Track which year the data is for
   const [betMismatches, setBetMismatches] = useState<BetMismatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +71,7 @@ function ConstructorsPage() {
       try {
         const response = await fetchRaceResults(selectedYear, { simulateLive });
         setInitialResponse(response);
+        setDataYear(selectedYear); // Track which year this data is for
 
         // Validate bets against canonical names
         const betsForValidation = getBetsForYear(selectedYear);
@@ -84,7 +86,10 @@ function ConstructorsPage() {
     loadData();
   }, [selectedYear, hasHydrated, simulateLive]);
 
-  if (loading) {
+  // Show loading if data is loading OR if data year doesn't match selected year
+  // This prevents showing stale data while the useEffect refetches
+  const isDataStale = dataYear !== null && dataYear !== selectedYear;
+  if (loading || isDataStale) {
     return (
       <div className="flex items-center justify-center h-[50vh]">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />

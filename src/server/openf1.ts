@@ -11,7 +11,11 @@ import type {
   UpcomingRace,
   LiveSession,
 } from "@/types";
-import { transformDriverStandings, transformTeamStandings } from "./transforms";
+import {
+  transformDriverStandings,
+  transformTeamStandings,
+  deriveTeamStandingsFromDriverStandings,
+} from "./transforms";
 import {
   getDriverFromCache,
   cacheDriversFromApi,
@@ -304,7 +308,21 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
       if (isCompleted) {
         const cached = await getRaceResultFromCache(data.year, session.session_key);
         if (cached) {
-          results.push(cached);
+          // Check if cached data has null team names (bad data from old API responses)
+          const hasNullTeamNames = cached.teamStandings.some((t) => t.team_name == null);
+          if (hasNullTeamNames) {
+            // Re-derive team standings from driver standings (which have reliable team names)
+            const fixedTeamStandings = deriveTeamStandingsFromDriverStandings(
+              cached.driverStandings,
+              cached.sessionKey
+            );
+            const fixedResult = { ...cached, teamStandings: fixedTeamStandings };
+            // Update cache with fixed data
+            await cacheRaceResult(data.year, fixedResult);
+            results.push(fixedResult);
+          } else {
+            results.push(cached);
+          }
           continue;
         }
       }
@@ -363,11 +381,13 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
               allDrivers,
               session.session_key
             );
-            const teamStandings = transformTeamStandings(
-              apiTeamStandings,
-              allDrivers,
-              session.session_key
-            );
+
+            // Use API team standings if they have valid team names,
+            // otherwise derive from driver standings (more reliable)
+            const hasNullTeamNames = apiTeamStandings.some((t) => t.team_name == null);
+            const teamStandings = hasNullTeamNames
+              ? deriveTeamStandingsFromDriverStandings(driverStandings, session.session_key)
+              : transformTeamStandings(apiTeamStandings, allDrivers, session.session_key);
 
             const result: RaceResult = {
               sessionKey: session.session_key,
@@ -515,11 +535,13 @@ export const fetchLiveRaceData = createServerFn({ method: "GET" })
         data.sessionKey,
         { skipMissing: true } // Don't fail on missing drivers during live updates
       );
-      const teamStandings = transformTeamStandings(
-        apiTeamStandings,
-        allDrivers,
-        data.sessionKey
-      );
+
+      // Use API team standings if they have valid team names,
+      // otherwise derive from driver standings (more reliable)
+      const hasNullTeamNames = apiTeamStandings.some((t) => t.team_name == null);
+      const teamStandings = hasNullTeamNames
+        ? deriveTeamStandingsFromDriverStandings(driverStandings, data.sessionKey)
+        : transformTeamStandings(apiTeamStandings, allDrivers, data.sessionKey);
 
       // DEV: Simulate random overtake by swapping two adjacent drivers
       // Points stay with position (like real API during live race)

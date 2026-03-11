@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { transformDriverStandings, transformTeamStandings } from "./transforms";
+import { transformDriverStandings, transformTeamStandings, deriveTeamStandingsFromDriverStandings } from "./transforms";
 import { getDriverColors, getConstructorColors } from "@/lib/scoring";
 import type { ApiDriverChampionship, ApiTeamChampionship, ApiDriver, RaceResult } from "@/types";
 
@@ -296,6 +296,55 @@ describe("transformTeamStandings", () => {
     const result = transformTeamStandings(mockApiTeamStandings, mockDrivers, 9693);
     expect(result[0].team_name).toBe("McLaren");
     expect(result[2].team_name).toBe("Red Bull Racing");
+  });
+});
+
+describe("deriveTeamStandingsFromDriverStandings", () => {
+  it("derives team standings from driver standings by aggregating points", () => {
+    const driverStandings = [
+      { position: 1, driver_number: 4, driver_first_name: "Lando", driver_last_name: "Norris", driver_name_acronym: "NOR", team_name: "McLaren", team_colour: "FF8000", points: 25, session_key: 9693 },
+      { position: 2, driver_number: 16, driver_first_name: "Charles", driver_last_name: "Leclerc", driver_name_acronym: "LEC", team_name: "Ferrari", team_colour: "E8002D", points: 18, session_key: 9693 },
+      { position: 3, driver_number: 81, driver_first_name: "Oscar", driver_last_name: "Piastri", driver_name_acronym: "PIA", team_name: "McLaren", team_colour: "FF8000", points: 15, session_key: 9693 },
+      { position: 4, driver_number: 55, driver_first_name: "Carlos", driver_last_name: "Sainz", driver_name_acronym: "SAI", team_name: "Ferrari", team_colour: "E8002D", points: 12, session_key: 9693 },
+    ];
+
+    const result = deriveTeamStandingsFromDriverStandings(driverStandings, 9693);
+
+    expect(result).toHaveLength(2);
+    // McLaren: 25 + 15 = 40 points (1st place)
+    expect(result[0].team_name).toBe("McLaren");
+    expect(result[0].points).toBe(40);
+    expect(result[0].position).toBe(1);
+    expect(result[0].team_colour).toBe("FF8000");
+    // Ferrari: 18 + 12 = 30 points (2nd place)
+    expect(result[1].team_name).toBe("Ferrari");
+    expect(result[1].points).toBe(30);
+    expect(result[1].position).toBe(2);
+  });
+
+  it("handles single-driver teams correctly", () => {
+    const driverStandings = [
+      { position: 1, driver_number: 4, driver_first_name: "Lando", driver_last_name: "Norris", driver_name_acronym: "NOR", team_name: "McLaren", team_colour: "FF8000", points: 25, session_key: 9693 },
+      { position: 2, driver_number: 1, driver_first_name: "Max", driver_last_name: "Verstappen", driver_name_acronym: "VER", team_name: "Red Bull Racing", team_colour: "3671C6", points: 18, session_key: 9693 },
+    ];
+
+    const result = deriveTeamStandingsFromDriverStandings(driverStandings, 9693);
+
+    expect(result).toHaveLength(2);
+    expect(result[0].team_name).toBe("McLaren");
+    expect(result[0].points).toBe(25);
+    expect(result[1].team_name).toBe("Red Bull Racing");
+    expect(result[1].points).toBe(18);
+  });
+
+  it("includes session_key in output", () => {
+    const driverStandings = [
+      { position: 1, driver_number: 4, driver_first_name: "Lando", driver_last_name: "Norris", driver_name_acronym: "NOR", team_name: "McLaren", team_colour: "FF8000", points: 25, session_key: 9693 },
+    ];
+
+    const result = deriveTeamStandingsFromDriverStandings(driverStandings, 12345);
+
+    expect(result[0].session_key).toBe(12345);
   });
 });
 

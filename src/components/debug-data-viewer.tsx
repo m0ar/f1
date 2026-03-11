@@ -26,6 +26,7 @@ export function DebugDataViewer({ open, onOpenChange }: DebugDataViewerProps) {
   const simulateLive = usePreferences((state) => state.simulateLive);
 
   const [data, setData] = useState<RaceDataResponse | null>(null);
+  const [dataYear, setDataYear] = useState<number | null>(null); // Track which year the data is for
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("overview");
@@ -38,6 +39,7 @@ export function DebugDataViewer({ open, onOpenChange }: DebugDataViewerProps) {
     try {
       const response = await fetchRaceResults(selectedYear, { simulateLive });
       setData(response);
+      setDataYear(selectedYear); // Track which year this data is for
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
@@ -131,7 +133,8 @@ export function DebugDataViewer({ open, onOpenChange }: DebugDataViewerProps) {
 
         {/* Content */}
         <div className="flex-1 overflow-auto min-h-0">
-          {loading && !data ? (
+          {/* Show loading if data is loading OR if data year doesn't match selected year */}
+          {(loading || (dataYear !== null && dataYear !== selectedYear)) ? (
             <div className="flex items-center justify-center h-32">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
             </div>
