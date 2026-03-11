@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import type { RaceResult, ApiDriver } from "@/types";
+import type { RaceResult, ApiDriver, RaceSession } from "@/types";
 
 // Cached driver info structure
 interface CachedDriverInfo {
@@ -250,4 +250,93 @@ export async function getCachedRaceResultsForYear(
   }
 
   return results;
+}
+
+// ============================================================================
+// Session caching (full session list for a year)
+// ============================================================================
+
+// Sessions cache TTL: 1 hour (calendar rarely changes)
+const SESSIONS_CACHE_TTL_SECONDS = 60 * 60;
+
+// Wrapper for cached sessions with metadata
+interface CachedSessionsEntry {
+  sessions: RaceSession[];
+  cachedAt: number;
+}
+
+// Result of sessions cache lookup
+export interface SessionsCacheResult {
+  sessions: RaceSession[];
+  isStale: boolean;
+}
+
+/**
+ * Get all sessions for a year from KV cache.
+ * Returns all session types (Practice, Qualifying, Race, Sprint, etc.)
+ */
+export async function getSessionsFromCache(year: number): Promise<SessionsCacheResult | null> {
+  try {
+    const kv = env.F1_RACE_RESULTS;
+    if (!kv) return null;
+
+    const cached = await kv.get(`sessions:${year}`, "json");
+    if (!cached) return null;
+
+    const entry = cached as CachedSessionsEntry;
+    const age = Date.now() - entry.cachedAt;
+    const isStale = age > SESSIONS_CACHE_TTL_SECONDS * 1000;
+
+    return {
+      sessions: entry.sessions,
+      isStale,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cache all sessions for a year.
+ * Uses a longer hard TTL (24 hours) since session data changes rarely.
+ */
+export async function cacheSessionsForYear(year: number, sessions: RaceSession[]): Promise<void> {
+  try {
+    const kv = env.F1_RACE_RESULTS;
+    if (!kv) return;
+
+    const entry: CachedSessionsEntry = {
+      sessions,
+      cachedAt: Date.now(),
+    };
+
+    // Hard TTL of 24 hours - sessions list changes very rarely
+    await kv.put(`sessions:${year}`, JSON.stringify(entry), {
+      expirationTtl: 24 * 60 * 60,
+    });
+  } catch {
+    // Silently fail
+  }
+}
+
+/**
+ * Get a specific session by key from cache.
+ * Useful for live polling when you need session metadata.
+ */
+export async function getSessionFromCache(
+  year: number,
+  sessionKey: number
+): Promise<RaceSession | null> {
+  const result = await getSessionsFromCache(year);
+  if (!result) return null;
+  return result.sessions.find((s) => s.session_key === sessionKey) ?? null;
+}
+
+/**
+ * Filter sessions to get only main races (not sprints, practice, qualifying).
+ */
+export function filterRaceSessions(sessions: RaceSession[]): RaceSession[] {
+  return sessions.filter(
+    (s) => s.session_type === "Race" && s.session_name === "Race"
+  );
 }

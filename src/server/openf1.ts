@@ -21,6 +21,10 @@ import {
   cacheDriversFromApi,
   getRaceResultFromCache,
   cacheRaceResult,
+  getSessionsFromCache,
+  cacheSessionsForYear,
+  getSessionFromCache,
+  filterRaceSessions,
 } from "./kv-cache";
 
 const BASE_URL = "https://api.openf1.org/v1";
@@ -177,23 +181,11 @@ async function authenticatedFetch(url: string, retries = 3): Promise<Response> {
   return response;
 }
 
-// In-memory cache only for session list (cheap to refetch, changes rarely)
-// Race results and driver names use KV for persistence
-const sessionsCache = new Map<number, { sessions: RaceSession[]; timestamp: number }>();
-const SESSIONS_CACHE_TTL = 60 * 60 * 1000; // 1 hour
-
 // Session status from race_control API
 type SessionStatus = "not_started" | "started" | "finished" | "aborted";
 
-// In-memory cache for session status (short-lived, per-request batch)
-const sessionStatusCache = new Map<number, SessionStatus>();
-
 // Fetch session status from race_control API
 async function getSessionStatus(sessionKey: number): Promise<SessionStatus> {
-  // Check in-memory cache first
-  const cached = sessionStatusCache.get(sessionKey);
-  if (cached) return cached;
-
   try {
     const response = await authenticatedFetch(
       `${BASE_URL}/race_control?session_key=${sessionKey}&category=SessionStatus`
@@ -218,8 +210,6 @@ async function getSessionStatus(sessionKey: number): Promise<SessionStatus> {
       }
     }
 
-    // Cache the result
-    sessionStatusCache.set(sessionKey, status);
     return status;
   } catch {
     return "not_started";
@@ -404,32 +394,50 @@ async function refreshRaceResult(
   }
 }
 
+// Helper to fetch and cache all sessions for a year
+async function fetchAndCacheSessions(year: number): Promise<RaceSession[]> {
+  // Fetch ALL sessions for the year (not just races - useful for future features)
+  const sessionsResponse = await authenticatedFetch(
+    `${BASE_URL}/sessions?year=${year}`
+  );
+
+  if (!sessionsResponse.ok) {
+    throw new Error(`Failed to fetch sessions for ${year}: ${sessionsResponse.statusText}`);
+  }
+
+  const allSessions: RaceSession[] = await sessionsResponse.json();
+  allSessions.sort(
+    (a, b) => new Date(a.date_start).getTime() - new Date(b.date_start).getTime()
+  );
+
+  // Cache all sessions to KV (fire-and-forget)
+  cacheSessionsForYear(year, allSessions).catch(() => {});
+
+  return allSessions;
+}
+
 // Batched fetch - gets all race data in one server call
 export const fetchAllRaceData = createServerFn({ method: "GET" })
   .inputValidator((data: { year: number; simulateLive?: boolean }) => data)
   .handler(async ({ data }): Promise<RaceDataResponse> => {
-    // Get sessions (in-memory cache is fine here - cheap to refetch)
-    let sessions: RaceSession[];
-    const cachedSessions = sessionsCache.get(data.year);
+    // Get sessions from KV cache (stale-while-revalidate)
+    let allSessions: RaceSession[];
+    const cachedSessions = await getSessionsFromCache(data.year);
 
-    if (cachedSessions && Date.now() - cachedSessions.timestamp < SESSIONS_CACHE_TTL) {
-      sessions = cachedSessions.sessions;
-    } else {
-      // This endpoint returns ALL race sessions for the year, including upcoming races
-      const sessionsResponse = await authenticatedFetch(
-        `${BASE_URL}/sessions?session_name=Race&year=${data.year}`
-      );
+    if (cachedSessions) {
+      allSessions = cachedSessions.sessions;
 
-      if (!sessionsResponse.ok) {
-        throw new Error(`Failed to fetch race sessions for ${data.year}: ${sessionsResponse.statusText}`);
+      // If stale, refresh in background
+      if (cachedSessions.isStale) {
+        fetchAndCacheSessions(data.year).catch(() => {});
       }
-
-      sessions = await sessionsResponse.json();
-      sessions.sort(
-        (a, b) => new Date(a.date_start).getTime() - new Date(b.date_start).getTime()
-      );
-      sessionsCache.set(data.year, { sessions, timestamp: Date.now() });
+    } else {
+      // No cache - fetch from API
+      allSessions = await fetchAndCacheSessions(data.year);
     }
+
+    // Filter to main races only (session_type=Race, session_name=Race)
+    const sessions = filterRaceSessions(allSessions);
 
     const results: RaceResult[] = [];
     const upcomingRaces: UpcomingRace[] = [];
@@ -762,10 +770,8 @@ export const fetchLiveRaceData = createServerFn({ method: "GET" })
         teamStandings.push(...recalculatedTeams);
       }
 
-      // Session metadata should be in the in-memory cache from initial load
-      const sessionInfo = sessionsCache.get(data.year)?.sessions.find(
-        (s) => s.session_key === data.sessionKey
-      );
+      // Get session metadata from KV cache
+      const sessionInfo = await getSessionFromCache(data.year, data.sessionKey);
 
       return {
         sessionKey: data.sessionKey,
