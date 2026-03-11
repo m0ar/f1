@@ -21,7 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { ParticipantDetail } from "@/components/participant-detail";
 import { usePreferences, useHasHydrated } from "@/stores/preferences";
 import { fetchRaceResults } from "@/lib/api";
-import { getLeaderboard, validateBets } from "@/lib/scoring";
+import { getLeaderboard, validateBets, checkDataQuality, type DataQualityIssue } from "@/lib/scoring";
 import { getBetsForYear } from "@/lib/bets";
 import type { ParticipantScore, BetMismatch, RaceDataResponse } from "@/types";
 import { useLiveRaceData } from "@/hooks/useLiveRaceData";
@@ -45,6 +45,7 @@ function LeaderboardPage() {
   const [initialResponse, setInitialResponse] = useState<RaceDataResponse>(emptyResponse);
   const [selectedRaceIndex, setSelectedRaceIndex] = useState<number | null>(null);
   const [betMismatches, setBetMismatches] = useState<BetMismatch[]>([]);
+  const [dataQualityIssues, setDataQualityIssues] = useState<DataQualityIssue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedParticipant, setSelectedParticipant] = useState<string | null>(null);
@@ -69,6 +70,7 @@ function LeaderboardPage() {
       setLoading(true);
       setError(null);
       setBetMismatches([]);
+      setDataQualityIssues([]);
       try {
         const response = await fetchRaceResults(selectedYear, { simulateLive });
         setInitialResponse(response);
@@ -78,6 +80,10 @@ function LeaderboardPage() {
         } else {
           setSelectedRaceIndex(null);
         }
+
+        // Check data quality
+        const qualityIssues = checkDataQuality(response.results);
+        setDataQualityIssues(qualityIssues);
 
         // Validate bets against canonical names
         const betsForValidation = getBetsForYear(selectedYear);
@@ -202,6 +208,25 @@ function LeaderboardPage() {
             Failed to load {failedSessions.length} race{failedSessions.length > 1 ? "s" : ""}:{" "}
             {failedSessions.map((s) => s.circuitName).join(", ")}
           </span>
+        </div>
+      )}
+
+      {dataQualityIssues.length > 0 && (
+        <div className="p-3 text-sm bg-red-500/10 border border-red-500/30 rounded-lg text-red-700 dark:text-red-400">
+          <div className="flex items-center gap-2 font-medium mb-2">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+            <span>Data quality issues detected ({dataQualityIssues.length})</span>
+          </div>
+          <ul className="ml-6 space-y-1 list-disc text-xs">
+            {dataQualityIssues.slice(0, 5).map((issue, i) => (
+              <li key={i}>{issue.message}</li>
+            ))}
+            {dataQualityIssues.length > 5 && (
+              <li className="text-red-600 dark:text-red-300">
+                ...and {dataQualityIssues.length - 5} more issues
+              </li>
+            )}
+          </ul>
         </div>
       )}
 

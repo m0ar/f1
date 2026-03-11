@@ -10,6 +10,49 @@ import type {
   BetMismatch,
 } from "@/types";
 
+export interface DataQualityIssue {
+  type: "missing_team_name" | "missing_driver_name" | "missing_points" | "duplicate_position";
+  message: string;
+  sessionKey: number;
+  position?: number;
+}
+
+/**
+ * Check race results for data quality issues.
+ * Returns an array of issues found.
+ */
+export function checkDataQuality(raceResults: RaceResult[]): DataQualityIssue[] {
+  const issues: DataQualityIssue[] = [];
+
+  for (const result of raceResults) {
+    // Check team standings
+    for (const team of result.teamStandings) {
+      if (team.team_name == null) {
+        issues.push({
+          type: "missing_team_name",
+          message: `Missing team name at position ${team.position} (${result.circuitName})`,
+          sessionKey: result.sessionKey,
+          position: team.position,
+        });
+      }
+    }
+
+    // Check driver standings
+    for (const driver of result.driverStandings) {
+      if (!driver.driver_first_name || !driver.driver_last_name) {
+        issues.push({
+          type: "missing_driver_name",
+          message: `Missing driver name at position ${driver.position} (${result.circuitName})`,
+          sessionKey: result.sessionKey,
+          position: driver.position,
+        });
+      }
+    }
+  }
+
+  return issues;
+}
+
 /**
  * Calculate the score for a single prediction list against actual standings.
  * Lower score is better (like golf).
@@ -55,7 +98,7 @@ export function calculateScores(
   }));
 
   const teamStandings = raceResult.teamStandings.map((t) => ({
-    name: t.team_name,
+    name: t.team_name ?? `[Unknown Team #${t.position}]`,
     position: t.position,
   }));
 
@@ -200,7 +243,8 @@ export function getConstructorPointsChartData(
     };
 
     result.teamStandings.forEach((team) => {
-      dataPoint[team.team_name] = team.points;
+      const name = team.team_name ?? `[Unknown #${team.position}]`;
+      dataPoint[name] = team.points;
     });
 
     return dataPoint;
@@ -230,7 +274,7 @@ export function getUniqueConstructors(raceResults: RaceResult[]): string[] {
 
   raceResults.forEach((result) => {
     result.teamStandings.forEach((team) => {
-      teams.add(team.team_name);
+      teams.add(team.team_name ?? `[Unknown #${team.position}]`);
     });
   });
 
@@ -268,9 +312,8 @@ export function getConstructorColors(raceResults: RaceResult[]): EntityColorMap 
   if (!latestResult) return colors;
 
   latestResult.teamStandings.forEach((team) => {
-    if (team.team_colour) {
-      colors[team.team_name] = team.team_colour;
-    }
+    const name = team.team_name ?? `[Unknown #${team.position}]`;
+    colors[name] = team.team_colour || "888888"; // gray fallback
   });
 
   return colors;
@@ -366,7 +409,7 @@ export function getCanonicalTeamNames(raceResults: RaceResult[]): string[] {
 
   for (const result of raceResults) {
     for (const team of result.teamStandings) {
-      teams.add(team.team_name);
+      teams.add(team.team_name ?? `[Unknown #${team.position}]`);
     }
   }
 

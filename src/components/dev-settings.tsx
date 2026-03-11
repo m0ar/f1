@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { Settings, X, Radio } from "lucide-react";
+import { Settings, X, Radio, Bug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePreferences } from "@/stores/preferences";
+import { DebugDataViewer } from "./debug-data-viewer";
 
 export function DevSettings() {
   const [isOpen, setIsOpen] = useState(false);
+  const [debugViewerOpen, setDebugViewerOpen] = useState(false);
   const simulateLive = usePreferences((state) => state.simulateLive);
   const toggleSimulateLive = usePreferences((state) => state.toggleSimulateLive);
 
@@ -23,20 +25,34 @@ export function DevSettings() {
               <X className="h-4 w-4" />
             </Button>
           </div>
-          <Button
-            variant={simulateLive ? "destructive" : "outline"}
-            size="sm"
-            className="w-full justify-start gap-2"
-            onClick={toggleSimulateLive}
-          >
-            <Radio className="h-4 w-4" />
-            {simulateLive ? "Live Mode ON" : "Simulate Live Race"}
-          </Button>
-          {simulateLive && (
-            <p className="text-xs text-muted-foreground mt-2">
-              Polling every 10s with random position swaps
-            </p>
-          )}
+          <div className="space-y-2">
+            <Button
+              variant={simulateLive ? "destructive" : "outline"}
+              size="sm"
+              className="w-full justify-start gap-2"
+              onClick={toggleSimulateLive}
+            >
+              <Radio className="h-4 w-4" />
+              {simulateLive ? "Live Mode ON" : "Simulate Live Race"}
+            </Button>
+            {simulateLive && (
+              <p className="text-xs text-muted-foreground">
+                Polling every 10s with random position swaps
+              </p>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full justify-start gap-2"
+              onClick={() => {
+                setDebugViewerOpen(true);
+                setIsOpen(false);
+              }}
+            >
+              <Bug className="h-4 w-4" />
+              Debug Data Viewer
+            </Button>
+          </div>
         </div>
       )}
       <Button
@@ -49,6 +65,8 @@ export function DevSettings() {
       >
         <Settings className={`h-4 w-4 ${simulateLive ? "animate-spin" : ""}`} />
       </Button>
+
+      <DebugDataViewer open={debugViewerOpen} onOpenChange={setDebugViewerOpen} />
     </div>
   );
 }

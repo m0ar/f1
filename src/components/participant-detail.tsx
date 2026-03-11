@@ -41,7 +41,7 @@ export function ParticipantDetail({
   })) ?? [];
 
   const teamStandings = raceResult?.teamStandings.map((t) => ({
-    name: t.team_name,
+    name: t.team_name ?? `[Unknown #${t.position}]`,
     position: t.position,
     points: t.points,
   })) ?? [];

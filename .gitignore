@@ -1,5 +1,7 @@
 node_modules/
 dist/
 .wrangler/
+debug-output
 
 .dev.vars
+debug-output/
