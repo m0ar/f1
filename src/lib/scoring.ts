@@ -138,6 +138,7 @@ export function calculateScoreHistory(
 
       return {
         sessionKey: result.sessionKey,
+        sessionName: result.sessionName,
         circuitName: result.circuitName,
         driverScore: score?.driverScore ?? 0,
         normalizedDriverScore: score?.normalizedDriverScore ?? 0,
@@ -162,6 +163,13 @@ export function getLeaderboard(
 }
 
 /**
+ * Format race label with sprint indicator if applicable.
+ */
+function formatRaceLabel(circuitName: string, sessionName: string): string {
+  return sessionName === "Sprint" ? `${circuitName} (S)` : circuitName;
+}
+
+/**
  * Convert score history to chart data format for driver bets.
  */
 export function getDriverBetChartData(
@@ -175,7 +183,7 @@ export function getDriverBetChartData(
 
   return races.map((race, index) => {
     const dataPoint: BetChartDataPoint = {
-      race: race.circuitName,
+      race: formatRaceLabel(race.circuitName, race.sessionName),
       sessionKey: race.sessionKey,
     };
 
@@ -201,7 +209,7 @@ export function getConstructorBetChartData(
 
   return races.map((race, index) => {
     const dataPoint: BetChartDataPoint = {
-      race: race.circuitName,
+      race: formatRaceLabel(race.circuitName, race.sessionName),
       sessionKey: race.sessionKey,
     };
 
@@ -222,7 +230,7 @@ export function getDriverPointsChartData(
 ): PointsChartDataPoint[] {
   return raceResults.map((result) => {
     const dataPoint: PointsChartDataPoint = {
-      race: result.circuitName,
+      race: formatRaceLabel(result.circuitName, result.sessionName),
       sessionKey: result.sessionKey,
     };
 
@@ -243,7 +251,7 @@ export function getConstructorPointsChartData(
 ): PointsChartDataPoint[] {
   return raceResults.map((result) => {
     const dataPoint: PointsChartDataPoint = {
-      race: result.circuitName,
+      race: formatRaceLabel(result.circuitName, result.sessionName),
       sessionKey: result.sessionKey,
     };
 

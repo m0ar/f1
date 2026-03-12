@@ -366,3 +366,14 @@ export function filterRaceSessions(sessions: RaceSession[]): RaceSession[] {
     (s) => s.session_type === "Race" && s.session_name === "Race"
   );
 }
+
+/**
+ * Filter sessions to get all point-scoring sessions (races AND sprints).
+ * Both session types award championship points.
+ */
+export function filterPointsSessions(sessions: RaceSession[]): RaceSession[] {
+  return sessions.filter(
+    (s) => s.session_type === "Race" &&
+           (s.session_name === "Race" || s.session_name === "Sprint")
+  );
+}

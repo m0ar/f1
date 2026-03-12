@@ -352,6 +352,7 @@ describe("getDriverColors", () => {
   const mockRaceResults: RaceResult[] = [
     {
       sessionKey: 9693,
+      sessionName: "Race",
       location: "Melbourne",
       date: "2024-03-24",
       circuitName: "Albert Park",
@@ -428,6 +429,7 @@ describe("getConstructorColors", () => {
   const mockRaceResults: RaceResult[] = [
     {
       sessionKey: 9693,
+      sessionName: "Race",
       location: "Melbourne",
       date: "2024-03-24",
       circuitName: "Albert Park",

@@ -25,7 +25,7 @@ import {
   getSessionsFromCache,
   cacheSessionsForYear,
   getSessionFromCache,
-  filterRaceSessions,
+  filterPointsSessions,
 } from "./kv-cache";
 
 const BASE_URL = "https://api.openf1.org/v1";
@@ -347,6 +347,7 @@ async function refreshRaceResult(
 
         const result: RaceResult = {
           sessionKey: session.session_key,
+          sessionName: session.session_name,
           location: session.location,
           date: session.date_start,
           circuitName: session.circuit_short_name,
@@ -407,8 +408,8 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
       allSessions = await fetchAndCacheSessions(data.year);
     }
 
-    // Filter to main races only (session_type=Race, session_name=Race)
-    const sessions = filterRaceSessions(allSessions);
+    // Filter to point-scoring sessions (races AND sprints)
+    const sessions = filterPointsSessions(allSessions);
 
     const results: RaceResult[] = [];
     const upcomingRaces: UpcomingRace[] = [];
@@ -436,14 +437,12 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
       });
     }
 
-    // Track if we've fetched fresh driver data this request
-    let hasFetchedDriversThisRequest = false;
-
     for (const session of sessions) {
       // Collect future races as upcoming (no standings data yet)
       if (new Date(session.date_start).getTime() > Date.now()) {
         upcomingRaces.push({
           sessionKey: session.session_key,
+          sessionName: session.session_name,
           location: session.location,
           date: session.date_start,
           circuitName: session.circuit_short_name,
@@ -456,6 +455,11 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
       const cacheResult = await getRaceResultFromCache(data.year, session.session_key);
       if (cacheResult) {
         let resultData = cacheResult.data;
+
+        // Add sessionName if missing from legacy cached data
+        if (!resultData.sessionName) {
+          resultData = { ...resultData, sessionName: session.session_name };
+        }
 
         // Check if cached data has null team names (bad data from old API responses)
         const hasNullTeamNames = resultData.teamStandings.some((t) => t.team_name == null);
@@ -506,8 +510,9 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
               .filter((s) => !localDriverMap.has(s.driver_number))
               .map((s) => s.driver_number);
 
-            // If we have unknown drivers and haven't fetched yet, get all drivers for this session
-            if (unknownDriverNumbers.length > 0 && !hasFetchedDriversThisRequest) {
+            // If we have unknown drivers, fetch all drivers for this session
+            // (sprint sessions can have different drivers than main races)
+            if (unknownDriverNumbers.length > 0) {
               const driversResponse = await authenticatedFetch(
                 `${BASE_URL}/drivers?session_key=${session.session_key}`
               );
@@ -518,7 +523,6 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
                 for (const driver of sessionDrivers) {
                   localDriverMap.set(driver.driver_number, driver);
                 }
-                hasFetchedDriversThisRequest = true;
               }
             }
 
@@ -554,6 +558,7 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
 
             const result: RaceResult = {
               sessionKey: session.session_key,
+              sessionName: session.session_name,
               location: session.location,
               date: session.date_start,
               circuitName: session.circuit_short_name,
@@ -593,6 +598,7 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
     const liveSession: LiveSession | undefined = ongoingRace
       ? {
           sessionKey: ongoingRace.session_key,
+          sessionName: ongoingRace.session_name,
           location: ongoingRace.location,
           circuitName: ongoingRace.circuit_short_name,
           countryName: ongoingRace.country_name,
@@ -765,6 +771,7 @@ export const fetchLiveRaceData = createServerFn({ method: "GET" })
 
       return {
         sessionKey: data.sessionKey,
+        sessionName: sessionInfo?.session_name ?? "Race",
         location: sessionInfo?.location ?? "Unknown",
         date: sessionInfo?.date_start ?? new Date().toISOString(),
         circuitName: sessionInfo?.circuit_short_name ?? "Unknown",

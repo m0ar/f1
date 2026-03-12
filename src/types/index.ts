@@ -88,6 +88,7 @@ export interface TeamStanding {
 // Processed data types
 export interface RaceResult {
   sessionKey: number;
+  sessionName: string; // "Race" or "Sprint"
   location: string;
   date: string;
   circuitName: string;
@@ -108,6 +109,7 @@ export interface ParticipantScoreHistory {
   name: string;
   scores: {
     sessionKey: number;
+    sessionName: string; // "Race" or "Sprint"
     circuitName: string;
     driverScore: number;
     normalizedDriverScore: number;
@@ -143,6 +145,7 @@ export interface FailedSession {
 // Upcoming race session (no standings data yet)
 export interface UpcomingRace {
   sessionKey: number;
+  sessionName: string; // "Race" or "Sprint"
   location: string;
   date: string;
   circuitName: string;
@@ -152,6 +155,7 @@ export interface UpcomingRace {
 // Live session info (race currently in progress)
 export interface LiveSession {
   sessionKey: number;
+  sessionName: string; // "Race" or "Sprint"
   location: string;
   circuitName: string;
   countryName: string;

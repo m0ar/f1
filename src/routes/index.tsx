@@ -159,7 +159,7 @@ function LeaderboardPage() {
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Leaderboard</h1>
           <p className="text-sm sm:text-base text-muted-foreground">
             {hasRaceData && selectedResult
-              ? `Standings after ${selectedResult.circuitName} (${selectedResult.countryName})`
+              ? `Standings after ${selectedResult.circuitName}${selectedResult.sessionName === "Sprint" ? " Sprint" : ""} (${selectedResult.countryName})`
               : `Waiting for ${selectedYear} season to begin`}
             {isLive && lastUpdated && (
               <span className="text-xs ml-2 opacity-70">
@@ -347,27 +347,37 @@ function LeaderboardPage() {
           <div className="flex flex-wrap gap-2">
             {raceResults.map((result, index) => {
               const isLiveRace = raceData?.liveSession?.sessionKey === result.sessionKey;
+              const isSprint = result.sessionName === "Sprint";
               return (
                 <Badge
                   key={result.sessionKey}
                   variant={index === selectedRaceIndex ? "default" : "secondary"}
-                  className={`cursor-pointer hover:opacity-80 transition-opacity ${isLiveRace ? "ring-2 ring-red-500 ring-offset-1" : ""}`}
+                  className={`cursor-pointer hover:opacity-80 transition-opacity ${isSprint ? "pl-1" : ""} ${isLiveRace ? "ring-2 ring-red-500 ring-offset-1" : ""}`}
                   onClick={() => setUserSelectedIndex(index)}
                 >
+                  {isSprint && (
+                    <span className="text-[10px] font-bold mr-1 opacity-70">S</span>
+                  )}
                   {isLiveRace && <Radio className="h-3 w-3 mr-1" />}
                   {result.circuitName}
                 </Badge>
               );
             })}
-            {upcomingRaces.map((race) => (
-              <Badge
-                key={race.sessionKey}
-                variant="outline"
-                className="opacity-50 cursor-default"
-              >
-                {race.circuitName}
-              </Badge>
-            ))}
+            {upcomingRaces.map((race) => {
+              const isSprint = race.sessionName === "Sprint";
+              return (
+                <Badge
+                  key={race.sessionKey}
+                  variant="outline"
+                  className={`opacity-50 cursor-default ${isSprint ? "pl-1" : ""}`}
+                >
+                  {isSprint && (
+                    <span className="text-[10px] font-bold mr-1 opacity-70">S</span>
+                  )}
+                  {race.circuitName}
+                </Badge>
+              );
+            })}
             {!hasRaceData && upcomingRaces.length === 0 && (
               <p className="text-muted-foreground text-sm">
                 Race results will appear here once the season starts.
