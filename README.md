@@ -5,9 +5,11 @@ Track F1 season prediction bets among friends. Participants predict driver and c
 ## Development
 
 ```bash
+nvm use
 pnpm install
 pnpm dev
 ```
+
 
 ## Deployment
 
@@ -40,9 +42,11 @@ The app works without credentials but may hit rate limits during heavy use.
 
 ### Deploy
 
+Note: deployments are made automatically upon merge to main. Manually, it requires m0ar's cloudflare credentials.
+
 ```bash
 pnpm build
-pnpm deploy
+pnpm run deploy
 ```
 
 ## Adding Bets

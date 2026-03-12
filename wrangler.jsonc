@@ -6,6 +6,14 @@
 		"nodejs_compat"
 	],
 	"main": "@tanstack/react-start/server-entry",
+	"workers_dev": false,
+	"routes": [
+		{
+			"custom_domain": true,
+			"pattern": "f1.hubinette.me",
+			"zone_name": "hubinette.me"
+		}
+	],
 	"observability": {
 		"enabled": true
 	},
