@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { motion } from "motion/react";
 import { Trophy, TrendingUp, TrendingDown, Minus, Eye, AlertTriangle, ChevronLeft, ChevronRight, Radio } from "lucide-react";
 import {
@@ -34,8 +34,12 @@ function LeaderboardPage() {
   const simulateLive = usePreferences((state) => state.simulateLive);
   const hasHydrated = useHasHydrated();
 
-  const [selectedRaceIndex, setSelectedRaceIndex] = useState<number | null>(null);
+  // Track user's explicit race selection (null = auto-select latest)
+  const [userSelectedIndex, setUserSelectedIndex] = useState<number | null>(null);
   const [selectedParticipant, setSelectedParticipant] = useState<string | null>(null);
+
+  // Track year to reset user selection when it changes
+  const prevYearRef = useRef(selectedYear);
 
   // Use TanStack Query for data fetching with live polling
   const { data: raceData, isLoading, error, isLive, lastUpdated } = useLiveRaceData(
@@ -49,17 +53,20 @@ function LeaderboardPage() {
   const failedSessions = raceData?.failedSessions ?? [];
   const totalRaces = raceData?.totalRaces ?? 0;
 
-  // Set selected race index when data loads
-  useEffect(() => {
-    if (raceResults.length > 0 && selectedRaceIndex === null) {
-      setSelectedRaceIndex(raceResults.length - 1);
+  // Reset user selection when year changes
+  if (prevYearRef.current !== selectedYear) {
+    prevYearRef.current = selectedYear;
+    if (userSelectedIndex !== null) {
+      setUserSelectedIndex(null);
     }
-  }, [raceResults.length, selectedRaceIndex]);
+  }
 
-  // Reset race index when year changes
-  useEffect(() => {
-    setSelectedRaceIndex(null);
-  }, [selectedYear]);
+  // Derive actual index: use user selection if valid, otherwise latest race
+  const selectedRaceIndex = userSelectedIndex !== null && userSelectedIndex < raceResults.length
+    ? userSelectedIndex
+    : raceResults.length > 0
+      ? raceResults.length - 1
+      : null;
 
   // Compute data quality issues and bet mismatches
   const bets = getBetsForYear(selectedYear);
@@ -79,10 +86,10 @@ function LeaderboardPage() {
 
       if (event.key === "ArrowLeft" && selectedRaceIndex > 0) {
         event.preventDefault();
-        setSelectedRaceIndex(selectedRaceIndex - 1);
+        setUserSelectedIndex(selectedRaceIndex - 1);
       } else if (event.key === "ArrowRight" && selectedRaceIndex < raceResults.length - 1) {
         event.preventDefault();
-        setSelectedRaceIndex(selectedRaceIndex + 1);
+        setUserSelectedIndex(selectedRaceIndex + 1);
       }
     },
     [selectedRaceIndex, raceResults.length]
@@ -345,7 +352,7 @@ function LeaderboardPage() {
                   key={result.sessionKey}
                   variant={index === selectedRaceIndex ? "default" : "secondary"}
                   className={`cursor-pointer hover:opacity-80 transition-opacity ${isLiveRace ? "ring-2 ring-red-500 ring-offset-1" : ""}`}
-                  onClick={() => setSelectedRaceIndex(index)}
+                  onClick={() => setUserSelectedIndex(index)}
                 >
                   {isLiveRace && <Radio className="h-3 w-3 mr-1" />}
                   {result.circuitName}

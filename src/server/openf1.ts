@@ -18,6 +18,7 @@ import {
 } from "./transforms";
 import {
   getDriverFromCache,
+  getAllCachedDrivers,
   cacheDriversFromApi,
   getRaceResultFromCache,
   cacheRaceResult,
@@ -34,45 +35,6 @@ const TOKEN_URL = "https://api.openf1.org/token";
 let cachedToken: string | null = null;
 let tokenExpiry: number = 0;
 let tokenRefreshPromise: Promise<string | null> | null = null;
-
-// Rate limiting: 6 req/s, 60 req/min
-// Note: This is per-isolate, so actual rates may be higher across multiple isolates
-// The API will return 429 if we hit limits, which we handle with retries
-const RATE_LIMIT = {
-  perSecond: 6,
-  perMinute: 60,
-};
-
-let requestTimestamps: number[] = [];
-
-async function waitForRateLimit(): Promise<void> {
-  const now = Date.now();
-
-  // Clean up old timestamps (older than 1 minute)
-  requestTimestamps = requestTimestamps.filter(ts => now - ts < 60000);
-
-  // Check per-minute limit
-  if (requestTimestamps.length >= RATE_LIMIT.perMinute) {
-    const oldestInWindow = requestTimestamps[0];
-    const waitTime = 60000 - (now - oldestInWindow) + 100; // +100ms buffer
-    if (waitTime > 0) {
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-  }
-
-  // Check per-second limit (last 1000ms)
-  const recentRequests = requestTimestamps.filter(ts => now - ts < 1000);
-  if (recentRequests.length >= RATE_LIMIT.perSecond) {
-    const oldestRecent = recentRequests[0];
-    const waitTime = 1000 - (now - oldestRecent) + 50; // +50ms buffer
-    if (waitTime > 0) {
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-  }
-
-  // Record this request
-  requestTimestamps.push(Date.now());
-}
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -159,8 +121,6 @@ async function getAccessToken(): Promise<string | null> {
 }
 
 async function authenticatedFetch(url: string, retries = 3): Promise<Response> {
-  await waitForRateLimit();
-
   const token = await getAccessToken();
 
   const headers: HeadersInit = {};
@@ -249,8 +209,19 @@ async function isRaceOngoing(sessionKey: number, raceDate: string): Promise<bool
 }
 
 // Find the ongoing race session if one exists
+// Only checks races that could plausibly be ongoing (started within last 6 hours)
 async function getOngoingRace(sessions: RaceSession[]): Promise<RaceSession | null> {
-  for (const session of sessions) {
+  const now = Date.now();
+  const sixHoursAgo = now - 6 * 60 * 60 * 1000;
+
+  // Filter to races that could be ongoing (started but not too long ago)
+  const candidateSessions = sessions.filter((session) => {
+    const raceTime = new Date(session.date_start).getTime();
+    return raceTime <= now && raceTime > sixHoursAgo;
+  });
+
+  // Check only candidates (typically 0-1 races)
+  for (const session of candidateSessions) {
     if (await isRaceOngoing(session.session_key, session.date_start)) {
       return session;
     }
@@ -443,8 +414,30 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
     const upcomingRaces: UpcomingRace[] = [];
     const failedSessions: FailedSession[] = [];
 
-    // Build a local driver map as we process sessions (for within-request use)
+    // Pre-load all cached drivers for this year (avoids per-session API calls)
+    const cachedDrivers = await getAllCachedDrivers(data.year);
     const localDriverMap = new Map<number, ApiDriver>();
+
+    // Convert cached drivers to ApiDriver format
+    for (const [driverNumber, cached] of cachedDrivers) {
+      localDriverMap.set(driverNumber, {
+        driver_number: driverNumber,
+        first_name: cached.firstName,
+        last_name: cached.lastName,
+        name_acronym: cached.acronym,
+        team_name: cached.teamName,
+        team_colour: cached.teamColour || "",
+        meeting_key: 0,
+        session_key: 0,
+        broadcast_name: `${cached.firstName} ${cached.lastName}`,
+        full_name: `${cached.firstName} ${cached.lastName}`,
+        headshot_url: "",
+        country_code: null,
+      });
+    }
+
+    // Track if we've fetched fresh driver data this request
+    let hasFetchedDriversThisRequest = false;
 
     for (const session of sessions) {
       // Collect future races as upcoming (no standings data yet)
@@ -493,45 +486,50 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
       const isCompleted = await isRaceCompleted(session.session_key, session.date_start);
 
       try {
-        // Fetch driver standings, team standings, and driver info in parallel
-        const [driverChampResponse, teamChampResponse, driversResponse] = await Promise.all([
+        // Fetch only championship data (drivers are pre-loaded from cache)
+        const [driverChampResponse, teamChampResponse] = await Promise.all([
           authenticatedFetch(
             `${BASE_URL}/championship_drivers?session_key=${session.session_key}`
           ),
           authenticatedFetch(
             `${BASE_URL}/championship_teams?session_key=${session.session_key}`
           ),
-          authenticatedFetch(
-            `${BASE_URL}/drivers?session_key=${session.session_key}`
-          ),
         ]);
-
-        // Parse session drivers
-        let sessionDrivers: ApiDriver[] = [];
-        if (driversResponse.ok) {
-          sessionDrivers = await driversResponse.json();
-          // Cache all drivers to KV for future lookups
-          await cacheDriversFromApi(data.year, sessionDrivers);
-          // Add to local map for this request
-          for (const driver of sessionDrivers) {
-            localDriverMap.set(driver.driver_number, driver);
-          }
-        }
 
         if (driverChampResponse.ok && teamChampResponse.ok) {
           const apiDriverStandings: ApiDriverChampionship[] = await driverChampResponse.json();
           const apiTeamStandings: ApiTeamChampionship[] = await teamChampResponse.json();
 
           if (apiDriverStandings.length > 0 || apiTeamStandings.length > 0) {
-            // Check for unknown drivers and look them up
+            // Check for unknown drivers
             const unknownDriverNumbers = apiDriverStandings
               .filter((s) => !localDriverMap.has(s.driver_number))
               .map((s) => s.driver_number);
 
-            if (unknownDriverNumbers.length > 0) {
-              // Look up unknown drivers in parallel
+            // If we have unknown drivers and haven't fetched yet, get all drivers for this session
+            if (unknownDriverNumbers.length > 0 && !hasFetchedDriversThisRequest) {
+              const driversResponse = await authenticatedFetch(
+                `${BASE_URL}/drivers?session_key=${session.session_key}`
+              );
+              if (driversResponse.ok) {
+                const sessionDrivers: ApiDriver[] = await driversResponse.json();
+                // Cache and add to local map
+                cacheDriversFromApi(data.year, sessionDrivers).catch(() => {});
+                for (const driver of sessionDrivers) {
+                  localDriverMap.set(driver.driver_number, driver);
+                }
+                hasFetchedDriversThisRequest = true;
+              }
+            }
+
+            // If still missing drivers (rare: reserves), look them up individually
+            const stillMissing = apiDriverStandings
+              .filter((s) => !localDriverMap.has(s.driver_number))
+              .map((s) => s.driver_number);
+
+            if (stillMissing.length > 0) {
               const lookups = await Promise.all(
-                unknownDriverNumbers.map((num) => lookupDriverByNumber(num, data.year))
+                stillMissing.map((num) => lookupDriverByNumber(num, data.year))
               );
               for (const driver of lookups) {
                 if (driver) {
@@ -611,17 +609,34 @@ export const fetchLiveRaceData = createServerFn({ method: "GET" })
   .inputValidator((data: { sessionKey: number; year: number; simulateLive?: boolean }) => data)
   .handler(async ({ data }): Promise<RaceResult | null> => {
     try {
-      // Fetch championship data AND session drivers in parallel
-      // This makes the endpoint self-sufficient without relying on pre-cached drivers
-      const [driverChampResponse, teamChampResponse, driversResponse] = await Promise.all([
+      // Pre-load cached drivers (avoids API call if we have them)
+      const cachedDrivers = await getAllCachedDrivers(data.year);
+      const localDriverMap = new Map<number, ApiDriver>();
+
+      for (const [driverNumber, cached] of cachedDrivers) {
+        localDriverMap.set(driverNumber, {
+          driver_number: driverNumber,
+          first_name: cached.firstName,
+          last_name: cached.lastName,
+          name_acronym: cached.acronym,
+          team_name: cached.teamName,
+          team_colour: cached.teamColour || "",
+          meeting_key: 0,
+          session_key: data.sessionKey,
+          broadcast_name: `${cached.firstName} ${cached.lastName}`,
+          full_name: `${cached.firstName} ${cached.lastName}`,
+          headshot_url: "",
+          country_code: null,
+        });
+      }
+
+      // Fetch only championship data (drivers loaded from cache above)
+      const [driverChampResponse, teamChampResponse] = await Promise.all([
         authenticatedFetch(
           `${BASE_URL}/championship_drivers?session_key=${data.sessionKey}`
         ),
         authenticatedFetch(
           `${BASE_URL}/championship_teams?session_key=${data.sessionKey}`
-        ),
-        authenticatedFetch(
-          `${BASE_URL}/drivers?session_key=${data.sessionKey}`
         ),
       ]);
 
@@ -637,29 +652,33 @@ export const fetchLiveRaceData = createServerFn({ method: "GET" })
         return null;
       }
 
-      // Build driver map from session drivers response
-      const localDriverMap = new Map<number, ApiDriver>();
-      if (driversResponse.ok) {
-        const sessionDrivers: ApiDriver[] = await driversResponse.json();
-        // Cache drivers for future use (fire-and-forget)
-        cacheDriversFromApi(data.year, sessionDrivers).catch(() => {});
-        for (const driver of sessionDrivers) {
-          localDriverMap.set(driver.driver_number, driver);
-        }
-      }
-
-      // Check for any drivers in standings not in session (rare: reserves from other teams)
+      // Check for any unknown drivers
       const driverNumbers = apiDriverStandings.map((s) => s.driver_number);
       const missingDriverNumbers = driverNumbers.filter((num) => !localDriverMap.has(num));
 
+      // Only fetch drivers API if we have unknowns
       if (missingDriverNumbers.length > 0) {
-        // Look up missing drivers across all sessions
-        const lookups = await Promise.all(
-          missingDriverNumbers.map((num) => lookupDriverByNumber(num, data.year))
+        const driversResponse = await authenticatedFetch(
+          `${BASE_URL}/drivers?session_key=${data.sessionKey}`
         );
-        for (const driver of lookups) {
-          if (driver) {
+        if (driversResponse.ok) {
+          const sessionDrivers: ApiDriver[] = await driversResponse.json();
+          cacheDriversFromApi(data.year, sessionDrivers).catch(() => {});
+          for (const driver of sessionDrivers) {
             localDriverMap.set(driver.driver_number, driver);
+          }
+        }
+
+        // If still missing (rare: reserves), look them up individually
+        const stillMissing = driverNumbers.filter((num) => !localDriverMap.has(num));
+        if (stillMissing.length > 0) {
+          const lookups = await Promise.all(
+            stillMissing.map((num) => lookupDriverByNumber(num, data.year))
+          );
+          for (const driver of lookups) {
+            if (driver) {
+              localDriverMap.set(driver.driver_number, driver);
+            }
           }
         }
       }

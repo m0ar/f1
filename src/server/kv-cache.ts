@@ -38,13 +38,6 @@ function getSoftTTL(raceDate: string): number {
   return 7 * 24 * 60 * 60 * 1000;                   // 7 days - historical
 }
 
-/**
- * Calculate hard TTL for KV expiration (2x soft TTL).
- * This is when KV actually deletes the entry.
- */
-function getHardTTL(raceDate: string): number {
-  return Math.floor((getSoftTTL(raceDate) * 2) / 1000); // KV uses seconds
-}
 
 // Cached team info structure (extracted from driver data)
 interface CachedTeamInfo {
@@ -157,6 +150,39 @@ export async function getAllCachedTeams(year: number): Promise<string[]> {
   }
 }
 
+// Get all cached drivers for a year
+// Returns a map of driver number -> driver info
+export async function getAllCachedDrivers(
+  year: number
+): Promise<Map<number, CachedDriverInfo>> {
+  const drivers = new Map<number, CachedDriverInfo>();
+  try {
+    const kv = env.F1_DRIVER_NAMES;
+    if (!kv) return drivers;
+
+    const prefix = `driver:${year}:`;
+    const list = await kv.list({ prefix });
+
+    // Fetch all driver entries in parallel
+    const entries = await Promise.all(
+      list.keys.map(async (key) => {
+        const driverNumber = parseInt(key.name.replace(prefix, ""), 10);
+        const data = await kv.get(key.name, "json");
+        return { driverNumber, data: data as CachedDriverInfo | null };
+      })
+    );
+
+    for (const { driverNumber, data } of entries) {
+      if (data && !isNaN(driverNumber)) {
+        drivers.set(driverNumber, data);
+      }
+    }
+  } catch {
+    // Return whatever we got
+  }
+  return drivers;
+}
+
 // Get race result from KV cache with staleness info
 export async function getRaceResultFromCache(
   year: number,
@@ -194,7 +220,9 @@ export async function getRaceResultFromCache(
   }
 }
 
-// Store race result in KV cache with metadata and TTL
+// Store race result in KV cache with metadata
+// No expiration TTL - stale-while-revalidate handles freshness,
+// and keeping stale data allows the app to work during API outages/429s
 export async function cacheRaceResult(year: number, result: RaceResult): Promise<void> {
   try {
     const kv = env.F1_RACE_RESULTS;
@@ -205,11 +233,9 @@ export async function cacheRaceResult(year: number, result: RaceResult): Promise
       cachedAt: Date.now(),
     };
 
-    const hardTTL = getHardTTL(result.date);
     await kv.put(
       `race:${year}:${result.sessionKey}`,
-      JSON.stringify(entry),
-      { expirationTtl: hardTTL }
+      JSON.stringify(entry)
     );
   } catch {
     // Silently fail
