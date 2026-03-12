@@ -27,7 +27,7 @@ function makeQueryClient() {
         // With SSR, we want to avoid refetching immediately on the client
         staleTime: 30_000,
         // Don't retry on error during development
-        retry: process.env.NODE_ENV === "production" ? 3 : false,
+        retry: import.meta.env.PROD ? 3 : false,
       },
     },
   });
@@ -57,7 +57,13 @@ export const Route = createRootRoute({
         content: "Track your F1 season predictions and see who's winning",
       },
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      {
+        rel: "icon",
+        href: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏎️</text></svg>",
+      },
+    ],
   }),
   component: RootComponent,
   notFoundComponent: NotFound,
