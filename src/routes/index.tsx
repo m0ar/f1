@@ -274,8 +274,8 @@ function LeaderboardPage() {
               <TableRow>
                 {hasRaceData && <TableHead className="w-12 sm:w-16">Pos</TableHead>}
                 <TableHead>Participant</TableHead>
-                <TableHead className="text-right hidden sm:table-cell">Driver</TableHead>
-                <TableHead className="text-right hidden sm:table-cell">Constructor</TableHead>
+                <TableHead className="text-right hidden sm:table-cell">Drivers (norm)</TableHead>
+                <TableHead className="text-right hidden sm:table-cell">Constructors</TableHead>
                 <TableHead className="text-right">Total</TableHead>
                 {hasRaceData && <TableHead className="w-12 sm:w-16">Trend</TableHead>}
               </TableRow>
@@ -301,7 +301,7 @@ function LeaderboardPage() {
                             <Eye className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                           </div>
                         </TableCell>
-                        <TableCell className="text-right hidden sm:table-cell">{participant.driverScore}</TableCell>
+                        <TableCell className="text-right hidden sm:table-cell">{participant.driverScore} ({participant.normalizedDriverScore})</TableCell>
                         <TableCell className="text-right hidden sm:table-cell">{participant.constructorScore}</TableCell>
                         <TableCell className="text-right font-semibold">
                           {participant.totalScore}
@@ -445,8 +445,8 @@ function PodiumCard({
         <CardContent>
           <div className="grid grid-cols-3 gap-2 text-center">
             <div>
-              <p className="text-xs text-muted-foreground">Drivers</p>
-              <p className="text-lg font-semibold">{participant.driverScore}</p>
+              <p className="text-xs text-muted-foreground">Drivers (norm)</p>
+              <p className="text-lg font-semibold">{participant.driverScore} ({participant.normalizedDriverScore})</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Constructors</p>

@@ -108,12 +108,16 @@ export function calculateScores(
       bet.constructors,
       teamStandings
     );
+    // Normalize driver score (0.25x) to balance against constructor score
+    // since drivers have ~2x as many positions, leading to ~4x the max diff
+    const normalizedDriverScore = Math.round(driverScore * 0.25);
 
     return {
       name,
       driverScore,
+      normalizedDriverScore,
       constructorScore,
-      totalScore: driverScore + constructorScore,
+      totalScore: normalizedDriverScore + constructorScore,
     };
   });
 }
@@ -136,6 +140,7 @@ export function calculateScoreHistory(
         sessionKey: result.sessionKey,
         circuitName: result.circuitName,
         driverScore: score?.driverScore ?? 0,
+        normalizedDriverScore: score?.normalizedDriverScore ?? 0,
         constructorScore: score?.constructorScore ?? 0,
         totalScore: score?.totalScore ?? 0,
       };

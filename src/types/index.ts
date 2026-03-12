@@ -99,6 +99,7 @@ export interface RaceResult {
 export interface ParticipantScore {
   name: string;
   driverScore: number;
+  normalizedDriverScore: number;
   constructorScore: number;
   totalScore: number;
 }
@@ -109,6 +110,7 @@ export interface ParticipantScoreHistory {
     sessionKey: number;
     circuitName: string;
     driverScore: number;
+    normalizedDriverScore: number;
     constructorScore: number;
     totalScore: number;
   }[];
