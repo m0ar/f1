@@ -83,7 +83,7 @@ export function ParticipantDetail({
           <DialogTitle className="text-lg sm:text-xl">{participantName}'s Predictions</DialogTitle>
           <DialogDescription className="text-sm">
             {hasRaceData
-              ? `Comparing predictions to actual standings after ${raceResult.circuitName}`
+              ? `Comparing predictions to actual standings after ${raceResult.circuitName}${raceResult.sessionName === "Sprint" ? " (S)" : ""}`
               : "Season has not started yet. Showing predicted order."}
           </DialogDescription>
         </DialogHeader>
