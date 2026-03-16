@@ -223,22 +223,27 @@ export async function getRaceResultFromCache(
 // Store race result in KV cache with metadata
 // No expiration TTL - stale-while-revalidate handles freshness,
 // and keeping stale data allows the app to work during API outages/429s
-export async function cacheRaceResult(year: number, result: RaceResult): Promise<void> {
+// Returns true if cache write succeeded, false otherwise
+export async function cacheRaceResult(year: number, result: RaceResult): Promise<boolean> {
   try {
     const kv = env.F1_RACE_RESULTS;
-    if (!kv) return;
+    if (!kv) {
+      console.warn(`[cacheRaceResult] KV namespace F1_RACE_RESULTS not available`);
+      return false;
+    }
 
     const entry: CachedRaceResultEntry = {
       data: result,
       cachedAt: Date.now(),
     };
 
-    await kv.put(
-      `race:${year}:${result.sessionKey}`,
-      JSON.stringify(entry)
-    );
-  } catch {
-    // Silently fail
+    const key = `race:${year}:${result.sessionKey}`;
+    await kv.put(key, JSON.stringify(entry));
+    console.log(`[cacheRaceResult] Successfully cached ${key}`);
+    return true;
+  } catch (error) {
+    console.error(`[cacheRaceResult] Failed to cache race:${year}:${result.sessionKey}:`, error);
+    return false;
   }
 }
 

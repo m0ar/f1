@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Bug, ChevronDown, ChevronRight, Copy, Check, RefreshCw } from "lucide-react";
+import { Bug, ChevronDown, ChevronRight, Copy, Check, RefreshCw, AlertTriangle, CheckCircle } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -9,17 +9,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { usePreferences } from "@/stores/preferences";
-import { fetchRaceResults } from "@/lib/api";
+import { fetchRaceResults, fetchCacheDiffData } from "@/lib/api";
 import { checkDataQuality, type DataQualityIssue } from "@/lib/scoring";
 import { getBetsForYear } from "@/lib/bets";
-import type { RaceDataResponse, RaceResult } from "@/types";
+import type { RaceDataResponse, RaceResult, CacheDiffResponse } from "@/types";
 
 interface DebugDataViewerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-type TabId = "overview" | "races" | "bets" | "raw";
+type TabId = "overview" | "races" | "bets" | "raw" | "cache-diff";
 
 export function DebugDataViewer({ open, onOpenChange }: DebugDataViewerProps) {
   const selectedYear = usePreferences((state) => state.selectedYear);
@@ -33,6 +33,11 @@ export function DebugDataViewer({ open, onOpenChange }: DebugDataViewerProps) {
   const [expandedRaces, setExpandedRaces] = useState<Set<number>>(new Set());
   const [copied, setCopied] = useState(false);
 
+  // Cache diff state
+  const [cacheDiffData, setCacheDiffData] = useState<CacheDiffResponse | null>(null);
+  const [cacheDiffLoading, setCacheDiffLoading] = useState(false);
+  const [cacheDiffError, setCacheDiffError] = useState<string | null>(null);
+
   const loadData = async () => {
     setLoading(true);
     setError(null);
@@ -44,6 +49,29 @@ export function DebugDataViewer({ open, onOpenChange }: DebugDataViewerProps) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadCacheDiff = async (sessionKey?: number) => {
+    setCacheDiffLoading(true);
+    setCacheDiffError(null);
+    try {
+      const sessionKeys = sessionKey ? [sessionKey] : undefined;
+      const response = await fetchCacheDiffData(selectedYear, sessionKeys);
+      // Merge with existing data if we're loading a single session
+      if (sessionKey && cacheDiffData) {
+        const existingEntries = cacheDiffData.entries.filter((e) => e.sessionKey !== sessionKey);
+        setCacheDiffData({
+          entries: [...existingEntries, ...response.entries],
+          fetchedAt: response.fetchedAt,
+        });
+      } else {
+        setCacheDiffData(response);
+      }
+    } catch (err) {
+      setCacheDiffError(err instanceof Error ? err.message : "Failed to load cache diff");
+    } finally {
+      setCacheDiffLoading(false);
     }
   };
 
@@ -78,17 +106,19 @@ export function DebugDataViewer({ open, onOpenChange }: DebugDataViewerProps) {
 
   const bets = getBetsForYear(selectedYear);
   const qualityIssues = data ? checkDataQuality(data.results) : [];
+  const diffCount = cacheDiffData?.entries.filter((e) => e.hasDiff).length;
 
-  const tabs: { id: TabId; label: string; count?: number }[] = [
+  const tabs: { id: TabId; label: string; count?: number; warning?: boolean }[] = [
     { id: "overview", label: "Overview" },
     { id: "races", label: "Races", count: data?.results.length },
     { id: "bets", label: "Bets", count: Object.keys(bets).length },
     { id: "raw", label: "Raw JSON" },
+    { id: "cache-diff", label: "Cache Diff", count: diffCount, warning: diffCount !== undefined && diffCount > 0 },
   ];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+      <DialogContent className="!max-w-6xl w-[95vw] max-h-[85vh] flex flex-col" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Bug className="h-5 w-5" />
@@ -114,8 +144,11 @@ export function DebugDataViewer({ open, onOpenChange }: DebugDataViewerProps) {
             >
               {tab.label}
               {tab.count !== undefined && (
-                <span className="ml-1 text-xs opacity-60">({tab.count})</span>
+                <span className={`ml-1 text-xs ${tab.warning ? "text-yellow-600 dark:text-yellow-400" : "opacity-60"}`}>
+                  ({tab.count})
+                </span>
               )}
+              {tab.warning && <AlertTriangle className="h-3 w-3 ml-1 inline text-yellow-600 dark:text-yellow-400" />}
             </button>
           ))}
           <div className="flex-1" />
@@ -158,6 +191,14 @@ export function DebugDataViewer({ open, onOpenChange }: DebugDataViewerProps) {
                   data={data}
                   onCopy={() => copyToClipboard(JSON.stringify(data, null, 2))}
                   copied={copied}
+                />
+              )}
+              {activeTab === "cache-diff" && (
+                <CacheDiffTab
+                  data={cacheDiffData}
+                  loading={cacheDiffLoading}
+                  error={cacheDiffError}
+                  onLoad={loadCacheDiff}
                 />
               )}
             </>
@@ -231,8 +272,8 @@ function OverviewTab({
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
               <h4 className="text-muted-foreground mb-1">Top 5 Drivers</h4>
-              {data.results[data.results.length - 1].driverStandings.slice(0, 5).map((d) => (
-                <div key={d.position} className="flex justify-between">
+              {data.results[data.results.length - 1].driverStandings.slice(0, 5).map((d, i) => (
+                <div key={`driver-${i}`} className="flex justify-between">
                   <span>{d.position}. {d.driver_first_name} {d.driver_last_name}</span>
                   <span className="text-muted-foreground">{d.points} pts</span>
                 </div>
@@ -240,8 +281,8 @@ function OverviewTab({
             </div>
             <div>
               <h4 className="text-muted-foreground mb-1">Top 5 Teams</h4>
-              {data.results[data.results.length - 1].teamStandings.slice(0, 5).map((t) => (
-                <div key={t.position} className="flex justify-between">
+              {data.results[data.results.length - 1].teamStandings.slice(0, 5).map((t, i) => (
+                <div key={`team-${i}`} className="flex justify-between">
                   <span className={t.team_name == null ? "text-red-500" : ""}>
                     {t.position}. {t.team_name ?? "[NULL]"}
                   </span>
@@ -493,3 +534,205 @@ function RawTab({
     </div>
   );
 }
+
+function CacheDiffTab({
+  data,
+  loading,
+  error,
+  onLoad,
+}: {
+  data: CacheDiffResponse | null;
+  loading: boolean;
+  error: string | null;
+  onLoad: (sessionKey?: number) => void;
+}) {
+  const selectedYear = usePreferences((state) => state.selectedYear);
+  const [sessions, setSessions] = useState<Array<{ sessionKey: number; circuitName: string; sessionName: string; date: string }> | null>(null);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [selectedSession, setSelectedSession] = useState<number | null>(null);
+
+  // Load session list on mount
+  useEffect(() => {
+    const loadSessions = async () => {
+      setSessionsLoading(true);
+      try {
+        // Fetch race data to get the session list
+        const response = await fetchRaceResults(selectedYear);
+        const sessionList = response.results.map((r) => ({
+          sessionKey: r.sessionKey,
+          circuitName: r.circuitName,
+          sessionName: r.sessionName,
+          date: r.date,
+        }));
+        setSessions(sessionList);
+      } catch (err) {
+        console.error("Failed to load sessions:", err);
+      } finally {
+        setSessionsLoading(false);
+      }
+    };
+    loadSessions();
+  }, [selectedYear]);
+
+  const handleCompare = (sessionKey: number) => {
+    setSelectedSession(sessionKey);
+    onLoad(sessionKey);
+  };
+
+  // Find the current entry for the selected session
+  const currentEntry = data?.entries.find((e) => e.sessionKey === selectedSession);
+
+  if (sessionsLoading) {
+    return (
+      <div className="flex items-center justify-center h-32">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Select a session to compare KV cache with fresh API data.
+      </p>
+
+      {/* Session list */}
+      <div className="border rounded-lg divide-y max-h-64 overflow-auto">
+        {sessions?.map((session) => {
+          const isSelected = selectedSession === session.sessionKey;
+          const entry = data?.entries.find((e) => e.sessionKey === session.sessionKey);
+          const isLoading = loading && isSelected;
+
+          return (
+            <div
+              key={session.sessionKey}
+              className={`px-4 py-2 flex items-center gap-2 ${isSelected ? "bg-muted" : "hover:bg-muted/50"}`}
+            >
+              <div className="flex-1">
+                <span className="font-medium">{session.circuitName}</span>
+                <Badge variant="outline" className="text-xs ml-2">{session.sessionName}</Badge>
+                <span className="text-xs text-muted-foreground ml-2">
+                  {new Date(session.date).toLocaleDateString()}
+                </span>
+              </div>
+              <code className="text-xs bg-muted px-1 rounded">{session.sessionKey}</code>
+
+              {/* Status indicator */}
+              {entry && !isLoading && (
+                entry.hasDiff ? (
+                  <Badge variant="destructive" className="text-xs">
+                    {entry.diffs.length} diff{entry.diffs.length !== 1 ? "s" : ""}
+                  </Badge>
+                ) : entry.error ? (
+                  <Badge variant="destructive" className="text-xs">Error</Badge>
+                ) : (
+                  <Badge variant="outline" className="text-xs text-green-600 border-green-600">OK</Badge>
+                )
+              )}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleCompare(session.sessionKey)}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                ) : (
+                  "Compare"
+                )}
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Selected session diff result */}
+      {currentEntry && !loading && (
+        <div className="border rounded-lg overflow-hidden">
+          <div className={`px-4 py-2 font-medium text-sm flex items-center gap-2 ${
+            currentEntry.hasDiff ? "bg-yellow-500/10" : "bg-green-500/10"
+          }`}>
+            {currentEntry.hasDiff ? (
+              <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+            ) : (
+              <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+            )}
+            {currentEntry.circuitName} - {currentEntry.sessionName}
+          </div>
+
+          <div className="p-4 space-y-3">
+            {/* Cache metadata */}
+            <div className="text-xs text-muted-foreground">
+              {currentEntry.cachedAt ? (
+                <>Cached at {new Date(currentEntry.cachedAt).toLocaleString()}</>
+              ) : (
+                <span className="text-yellow-600">Not in cache</span>
+              )}
+              {currentEntry.error && <span className="text-red-500 ml-2">API error: {currentEntry.error}</span>}
+              {!currentEntry.fresh && !currentEntry.error && <span className="text-red-500 ml-2">API returned no data</span>}
+            </div>
+
+            {/* Diff table */}
+            {currentEntry.diffs.length > 0 ? (
+              <div className="border rounded overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-muted">
+                      <th className="px-3 py-2 text-left font-medium">Field</th>
+                      <th className="px-3 py-2 text-left font-medium">Cached</th>
+                      <th className="px-3 py-2 text-left font-medium">Fresh (API)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {currentEntry.diffs.map((diff, i) => (
+                      <tr key={i}>
+                        <td className="px-3 py-2 font-mono">{diff.field}</td>
+                        <td className="px-3 py-2 text-red-600 dark:text-red-400">
+                          {diff.cached ?? <span className="text-muted-foreground italic">null</span>}
+                        </td>
+                        <td className="px-3 py-2 text-green-600 dark:text-green-400">
+                          {diff.fresh ?? <span className="text-muted-foreground italic">null</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : !currentEntry.hasDiff ? (
+              <div className="text-sm text-green-600 dark:text-green-400">
+                Cache matches API data perfectly.
+              </div>
+            ) : null}
+
+            {/* Show messages for missing data */}
+            {currentEntry.cached === null && currentEntry.fresh !== null && (
+              <div className="p-3 bg-yellow-500/10 rounded text-xs">
+                <strong>Cache is empty but API has data.</strong> This session may not have been cached yet.
+              </div>
+            )}
+            {currentEntry.cached !== null && currentEntry.fresh === null && (
+              <div className="p-3 bg-red-500/10 rounded text-xs">
+                <strong>API returned no data but cache has data.</strong> This could indicate an API issue or the data was removed.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Loading indicator for selected session */}
+      {loading && selectedSession && (
+        <div className="border rounded-lg p-8 flex items-center justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        </div>
+      )}
+
+      {error && (
+        <div className="p-4 border border-destructive/30 rounded-lg bg-destructive/5 text-destructive text-sm">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+

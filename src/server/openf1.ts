@@ -10,6 +10,9 @@ import type {
   FailedSession,
   UpcomingRace,
   LiveSession,
+  CacheDiffEntry,
+  CacheDiffDetail,
+  CacheDiffResponse,
 } from "@/types";
 import {
   transformDriverStandings,
@@ -357,8 +360,12 @@ async function refreshRaceResult(
         };
 
         // Update the cache with fresh data
-        await cacheRaceResult(year, result);
-        console.log(`[refreshRaceResult] Updated cache for session ${session.session_key}`);
+        const cacheSuccess = await cacheRaceResult(year, result);
+        if (cacheSuccess) {
+          console.log(`[refreshRaceResult] Successfully refreshed cache for session ${session.session_key}`);
+        } else {
+          console.error(`[refreshRaceResult] Failed to write cache for session ${session.session_key}`);
+        }
       }
     }
   } catch (error) {
@@ -383,7 +390,7 @@ async function fetchAndCacheSessions(year: number): Promise<RaceSession[]> {
   );
 
   // Cache all sessions to KV (fire-and-forget)
-  cacheSessionsForYear(year, allSessions).catch(() => {});
+  await cacheSessionsForYear(year, allSessions);
 
   return allSessions;
 }
@@ -399,9 +406,10 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
     if (cachedSessions) {
       allSessions = cachedSessions.sessions;
 
-      // If stale, refresh in background
+      // If stale, refresh synchronously (background refresh doesn't work in Workers)
       if (cachedSessions.isStale) {
-        fetchAndCacheSessions(data.year).catch(() => {});
+        console.log(`[fetchAllRaceData] Sessions cache stale, refreshing...`);
+        allSessions = await fetchAndCacheSessions(data.year);
       }
     } else {
       // No cache - fetch from API
@@ -470,19 +478,22 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
             resultData.sessionKey
           );
           resultData = { ...resultData, teamStandings: fixedTeamStandings };
-          // Update cache with fixed data (fire-and-forget)
-          cacheRaceResult(data.year, resultData).catch(() => {});
+          // Update cache with fixed data
+          await cacheRaceResult(data.year, resultData);
         }
 
-        // Always use cached data (stale or not)
-        results.push(resultData);
-
-        // If stale, trigger background refresh (fire-and-forget)
-        // The refresh updates the cache for the next request
+        // If stale, refresh synchronously (background refresh doesn't work in Workers)
         if (cacheResult.isStale) {
-          refreshRaceResult(session, data.year, localDriverMap).catch(() => {});
+          console.log(`[fetchAllRaceData] Cache stale for ${session.circuit_short_name}, refreshing...`);
+          await refreshRaceResult(session, data.year, localDriverMap);
+          // Re-fetch the updated cache entry
+          const updatedCache = await getRaceResultFromCache(data.year, session.session_key);
+          if (updatedCache) {
+            resultData = updatedCache.data;
+          }
         }
 
+        results.push(resultData);
         continue;
       }
 
@@ -519,7 +530,7 @@ export const fetchAllRaceData = createServerFn({ method: "GET" })
               if (driversResponse.ok) {
                 const sessionDrivers: ApiDriver[] = await driversResponse.json();
                 // Cache and add to local map
-                cacheDriversFromApi(data.year, sessionDrivers).catch(() => {});
+                await cacheDriversFromApi(data.year, sessionDrivers);
                 for (const driver of sessionDrivers) {
                   localDriverMap.set(driver.driver_number, driver);
                 }
@@ -669,7 +680,7 @@ export const fetchLiveRaceData = createServerFn({ method: "GET" })
         );
         if (driversResponse.ok) {
           const sessionDrivers: ApiDriver[] = await driversResponse.json();
-          cacheDriversFromApi(data.year, sessionDrivers).catch(() => {});
+          await cacheDriversFromApi(data.year, sessionDrivers);
           for (const driver of sessionDrivers) {
             localDriverMap.set(driver.driver_number, driver);
           }
@@ -783,4 +794,305 @@ export const fetchLiveRaceData = createServerFn({ method: "GET" })
       console.error(`Error fetching live race data for session ${data.sessionKey}:`, error);
       return null;
     }
+  });
+
+// Helper to compute diffs between cached and fresh race results
+function computeRaceDiffs(cached: RaceResult | null, fresh: RaceResult | null): CacheDiffDetail[] {
+  if (!cached || !fresh) return [];
+
+  const diffs: CacheDiffDetail[] = [];
+
+  // Compare driver standings
+  const maxDrivers = Math.max(cached.driverStandings.length, fresh.driverStandings.length);
+  for (let i = 0; i < maxDrivers; i++) {
+    const cachedDriver = cached.driverStandings[i];
+    const freshDriver = fresh.driverStandings[i];
+
+    if (!cachedDriver && freshDriver) {
+      diffs.push({
+        field: `driver[${i + 1}]`,
+        cached: null,
+        fresh: `${freshDriver.driver_name_acronym} (P${freshDriver.position}, ${freshDriver.points}pts)`,
+      });
+    } else if (cachedDriver && !freshDriver) {
+      diffs.push({
+        field: `driver[${i + 1}]`,
+        cached: `${cachedDriver.driver_name_acronym} (P${cachedDriver.position}, ${cachedDriver.points}pts)`,
+        fresh: null,
+      });
+    } else if (cachedDriver && freshDriver) {
+      // Compare position
+      if (cachedDriver.position !== freshDriver.position) {
+        diffs.push({
+          field: `driver[${cachedDriver.driver_name_acronym}].position`,
+          cached: cachedDriver.position,
+          fresh: freshDriver.position,
+        });
+      }
+      // Compare points
+      if (cachedDriver.points !== freshDriver.points) {
+        diffs.push({
+          field: `driver[${cachedDriver.driver_name_acronym}].points`,
+          cached: cachedDriver.points,
+          fresh: freshDriver.points,
+        });
+      }
+      // Compare team
+      if (cachedDriver.team_name !== freshDriver.team_name) {
+        diffs.push({
+          field: `driver[${cachedDriver.driver_name_acronym}].team`,
+          cached: cachedDriver.team_name,
+          fresh: freshDriver.team_name,
+        });
+      }
+    }
+  }
+
+  // Compare team standings by team name (not by position index)
+  const cachedTeamNames = new Set(cached.teamStandings.map(t => t.team_name));
+  const freshTeamNames = new Set(fresh.teamStandings.map(t => t.team_name));
+
+  // Teams in cache but not in fresh, or with different stats
+  for (const cachedTeam of cached.teamStandings) {
+    if (!freshTeamNames.has(cachedTeam.team_name)) {
+      diffs.push({
+        field: `team[${cachedTeam.team_name}]`,
+        cached: `P${cachedTeam.position}, ${cachedTeam.points}pts`,
+        fresh: null,
+      });
+      continue;
+    }
+
+    // Compare with same team in fresh
+    const freshTeam = fresh.teamStandings.find(t => t.team_name === cachedTeam.team_name)!;
+    if (cachedTeam.position !== freshTeam.position) {
+      diffs.push({
+        field: `team[${cachedTeam.team_name}].position`,
+        cached: cachedTeam.position,
+        fresh: freshTeam.position,
+      });
+    }
+    if (cachedTeam.points !== freshTeam.points) {
+      diffs.push({
+        field: `team[${cachedTeam.team_name}].points`,
+        cached: cachedTeam.points,
+        fresh: freshTeam.points,
+      });
+    }
+  }
+
+  // Teams in fresh but not in cache
+  for (const freshTeam of fresh.teamStandings) {
+    if (!cachedTeamNames.has(freshTeam.team_name)) {
+      diffs.push({
+        field: `team[${freshTeam.team_name}]`,
+        cached: null,
+        fresh: `P${freshTeam.position}, ${freshTeam.points}pts`,
+      });
+    }
+  }
+
+  return diffs;
+}
+
+// Fetch fresh data from API for a specific session (bypasses cache)
+// Takes a pre-loaded driver map to avoid redundant lookups
+async function fetchFreshRaceResult(
+  session: RaceSession,
+  year: number,
+  preloadedDrivers: Map<number, ApiDriver>
+): Promise<{ result: RaceResult | null; error?: string }> {
+  const startTime = Date.now();
+  console.log(`[cacheDiff] Fetching fresh data for ${session.circuit_short_name} (${session.session_key})...`);
+
+  try {
+    // Clone the preloaded map so we don't mutate the original
+    const localDriverMap = new Map(preloadedDrivers);
+
+    // Fetch championship data fresh from API (only 2 calls now, drivers pre-loaded)
+    const [driverChampResponse, teamChampResponse] = await Promise.all([
+      authenticatedFetch(
+        `${BASE_URL}/championship_drivers?session_key=${session.session_key}`
+      ),
+      authenticatedFetch(
+        `${BASE_URL}/championship_teams?session_key=${session.session_key}`
+      ),
+    ]);
+
+    if (!driverChampResponse.ok) {
+      const errMsg = `Driver champ API returned ${driverChampResponse.status}`;
+      console.warn(`[cacheDiff] ${session.circuit_short_name}: ${errMsg}`);
+      return { result: null, error: errMsg };
+    }
+
+    if (!teamChampResponse.ok) {
+      const errMsg = `Team champ API returned ${teamChampResponse.status}`;
+      console.warn(`[cacheDiff] ${session.circuit_short_name}: ${errMsg}`);
+      return { result: null, error: errMsg };
+    }
+
+    const apiDriverStandings: ApiDriverChampionship[] = await driverChampResponse.json();
+    const apiTeamStandings: ApiTeamChampionship[] = await teamChampResponse.json();
+
+    if (apiDriverStandings.length === 0 && apiTeamStandings.length === 0) {
+      console.log(`[cacheDiff] ${session.circuit_short_name}: No standings data from API`);
+      return { result: null, error: "No standings data" };
+    }
+
+    // Check for missing drivers and look them up
+    const missingDriverNumbers = apiDriverStandings
+      .filter((s) => !localDriverMap.has(s.driver_number))
+      .map((s) => s.driver_number);
+
+    if (missingDriverNumbers.length > 0) {
+      console.log(`[cacheDiff] ${session.circuit_short_name}: Looking up ${missingDriverNumbers.length} missing drivers`);
+      const lookups = await Promise.all(
+        missingDriverNumbers.map((num) => lookupDriverByNumber(num, year))
+      );
+      for (const driver of lookups) {
+        if (driver) {
+          localDriverMap.set(driver.driver_number, driver);
+        }
+      }
+    }
+
+    const allDrivers = Array.from(localDriverMap.values());
+    const driverStandings = transformDriverStandings(
+      apiDriverStandings,
+      allDrivers,
+      session.session_key
+    );
+
+    const hasNullTeamNames = apiTeamStandings.some((t) => t.team_name == null);
+    const teamStandings = hasNullTeamNames
+      ? deriveTeamStandingsFromDriverStandings(driverStandings, session.session_key)
+      : transformTeamStandings(apiTeamStandings, allDrivers, session.session_key);
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[cacheDiff] ${session.circuit_short_name}: Done in ${elapsed}ms`);
+
+    return {
+      result: {
+        sessionKey: session.session_key,
+        sessionName: session.session_name,
+        location: session.location,
+        date: session.date_start,
+        circuitName: session.circuit_short_name,
+        countryName: session.country_name,
+        driverStandings: driverStandings.sort((a, b) => a.position - b.position),
+        teamStandings: teamStandings.sort((a, b) => a.position - b.position),
+      },
+    };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : "Unknown error";
+    console.warn(`[cacheDiff] ${session.circuit_short_name}: Failed - ${errMsg}`);
+    return { result: null, error: errMsg };
+  }
+}
+
+// Compare KV cache with fresh API data for debugging (read-only, does not modify cache)
+export const fetchCacheDiff = createServerFn({ method: "POST" })
+  .inputValidator((data: { year: number; sessionKeys?: number[] }) => data)
+  .handler(async ({ data }): Promise<CacheDiffResponse> => {
+    const startTime = Date.now();
+    console.log(`[cacheDiff] Starting cache comparison for year ${data.year}`);
+
+    // Get sessions
+    let allSessions: RaceSession[];
+    const cachedSessions = await getSessionsFromCache(data.year);
+
+    if (cachedSessions) {
+      allSessions = cachedSessions.sessions;
+      console.log(`[cacheDiff] Using ${allSessions.length} cached sessions`);
+    } else {
+      console.log(`[cacheDiff] Fetching sessions from API...`);
+      allSessions = await fetchAndCacheSessions(data.year);
+      console.log(`[cacheDiff] Fetched ${allSessions.length} sessions from API`);
+    }
+
+    // Filter to point-scoring sessions (races AND sprints)
+    const sessions = filterPointsSessions(allSessions);
+
+    // Filter to past sessions only
+    const pastSessions = sessions.filter(
+      (s) => new Date(s.date_start).getTime() <= Date.now()
+    );
+
+    // If specific session keys provided, filter to those
+    const targetSessions = data.sessionKeys
+      ? pastSessions.filter((s) => data.sessionKeys!.includes(s.session_key))
+      : pastSessions;
+
+    console.log(`[cacheDiff] Processing ${targetSessions.length} sessions`);
+
+    // Pre-load all cached drivers ONCE (big performance win)
+    console.log(`[cacheDiff] Pre-loading cached drivers...`);
+    const cachedDrivers = await getAllCachedDrivers(data.year);
+    const preloadedDrivers = new Map<number, ApiDriver>();
+
+    for (const [driverNumber, cached] of cachedDrivers) {
+      preloadedDrivers.set(driverNumber, {
+        driver_number: driverNumber,
+        first_name: cached.firstName,
+        last_name: cached.lastName,
+        name_acronym: cached.acronym,
+        team_name: cached.teamName,
+        team_colour: cached.teamColour || "",
+        meeting_key: 0,
+        session_key: 0,
+        broadcast_name: `${cached.firstName} ${cached.lastName}`,
+        full_name: `${cached.firstName} ${cached.lastName}`,
+        headshot_url: "",
+        country_code: null,
+      });
+    }
+    console.log(`[cacheDiff] Pre-loaded ${preloadedDrivers.size} drivers`);
+
+    // Process sessions in parallel batches of 3 to avoid overwhelming the API
+    const BATCH_SIZE = 3;
+    const entries: CacheDiffEntry[] = [];
+
+    for (let i = 0; i < targetSessions.length; i += BATCH_SIZE) {
+      const batch = targetSessions.slice(i, i + BATCH_SIZE);
+      console.log(`[cacheDiff] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(targetSessions.length / BATCH_SIZE)}`);
+
+      const batchResults = await Promise.all(
+        batch.map(async (session) => {
+          // Get cached data
+          const cacheResult = await getRaceResultFromCache(data.year, session.session_key);
+          const cached = cacheResult?.data ?? null;
+          const cachedAt = cacheResult?.cachedAt ?? null;
+
+          // Fetch fresh data from API
+          const { result: fresh, error } = await fetchFreshRaceResult(session, data.year, preloadedDrivers);
+
+          // Compute diffs
+          const diffs = computeRaceDiffs(cached, fresh);
+          const hasDiff = diffs.length > 0 || (cached === null) !== (fresh === null);
+
+          return {
+            sessionKey: session.session_key,
+            circuitName: session.circuit_short_name,
+            sessionName: session.session_name,
+            cached,
+            cachedAt,
+            fresh,
+            hasDiff,
+            diffs,
+            error,
+          };
+        })
+      );
+
+      entries.push(...batchResults);
+    }
+
+    const elapsed = Date.now() - startTime;
+    const diffsFound = entries.filter((e) => e.hasDiff).length;
+    console.log(`[cacheDiff] Completed in ${elapsed}ms. Found ${diffsFound} sessions with differences.`);
+
+    return {
+      entries,
+      fetchedAt: Date.now(),
+    };
   });

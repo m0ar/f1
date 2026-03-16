@@ -184,3 +184,27 @@ export interface BetValidationResult {
   isValid: boolean;
   mismatches: BetMismatch[];
 }
+
+// Cache comparison types for debug viewer
+export interface CacheDiffEntry {
+  sessionKey: number;
+  circuitName: string;
+  sessionName: string;
+  cached: RaceResult | null;
+  cachedAt: number | null;
+  fresh: RaceResult | null;
+  hasDiff: boolean;
+  diffs: CacheDiffDetail[];
+  error?: string;
+}
+
+export interface CacheDiffDetail {
+  field: string;
+  cached: string | number | null;
+  fresh: string | number | null;
+}
+
+export interface CacheDiffResponse {
+  entries: CacheDiffEntry[];
+  fetchedAt: number;
+}
