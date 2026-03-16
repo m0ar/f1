@@ -225,15 +225,16 @@ export function getConstructorBetChartData(
 /**
  * Get driver championship points chart data.
  * Pads missing drivers with 0 points to prevent lines from "popping up" mid-chart.
+ * Uses driver acronyms (VER, HAM, etc.) as keys for cleaner chart display.
  */
 export function getDriverPointsChartData(
   raceResults: RaceResult[]
 ): PointsChartDataPoint[] {
-  // First pass: collect all unique drivers across all races
+  // First pass: collect all unique driver acronyms across all races
   const allDrivers = new Set<string>();
   raceResults.forEach((result) => {
     result.driverStandings.forEach((driver) => {
-      allDrivers.add(`${driver.driver_first_name} ${driver.driver_last_name}`);
+      allDrivers.add(driver.driver_name_acronym);
     });
   });
 
@@ -245,14 +246,13 @@ export function getDriverPointsChartData(
     };
 
     // Initialize all drivers to 0
-    allDrivers.forEach((name) => {
-      dataPoint[name] = 0;
+    allDrivers.forEach((acronym) => {
+      dataPoint[acronym] = 0;
     });
 
     // Override with actual points for drivers in this race's standings
     result.driverStandings.forEach((driver) => {
-      const name = `${driver.driver_first_name} ${driver.driver_last_name}`;
-      dataPoint[name] = driver.points;
+      dataPoint[driver.driver_name_acronym] = driver.points;
     });
 
     return dataPoint;
@@ -297,14 +297,14 @@ export function getConstructorPointsChartData(
 }
 
 /**
- * Get unique driver names from race results for chart legend.
+ * Get unique driver acronyms from race results for chart legend.
  */
 export function getUniqueDrivers(raceResults: RaceResult[]): string[] {
   const drivers = new Set<string>();
 
   raceResults.forEach((result) => {
     result.driverStandings.forEach((driver) => {
-      drivers.add(`${driver.driver_first_name} ${driver.driver_last_name}`);
+      drivers.add(driver.driver_name_acronym);
     });
   });
 
@@ -327,7 +327,7 @@ export function getUniqueConstructors(raceResults: RaceResult[]): string[] {
 }
 
 /**
- * Get driver colors from race results (maps driver full name to team color).
+ * Get driver colors from race results (maps driver acronym to team color).
  */
 export function getDriverColors(raceResults: RaceResult[]): EntityColorMap {
   const colors: EntityColorMap = {};
@@ -337,9 +337,8 @@ export function getDriverColors(raceResults: RaceResult[]): EntityColorMap {
   if (!latestResult) return colors;
 
   latestResult.driverStandings.forEach((driver) => {
-    const name = `${driver.driver_first_name} ${driver.driver_last_name}`;
     if (driver.team_colour) {
-      colors[name] = driver.team_colour;
+      colors[driver.driver_name_acronym] = driver.team_colour;
     }
   });
 
