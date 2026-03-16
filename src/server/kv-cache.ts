@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import type { RaceResult, ApiDriver, RaceSession } from "@/types";
+import type { ApiDriver, ApiDriverChampionship, ApiTeamChampionship, RaceSession } from "@/types";
 
 // Cached driver info structure
 interface CachedDriverInfo {
@@ -10,17 +10,18 @@ interface CachedDriverInfo {
   teamColour: string;
 }
 
-// Wrapper for cached race results with metadata
-interface CachedRaceResultEntry {
-  data: RaceResult;
-  cachedAt: number; // timestamp in ms
+// Raw API responses cached per session - no app logic transformation
+// This keeps the cache as a pure network optimization layer
+export interface CachedSessionStandings {
+  driverChampionship: ApiDriverChampionship[];
+  teamChampionship: ApiTeamChampionship[];
+  cachedAt: number;
 }
 
 // Result of cache lookup with staleness info
-export interface CacheResult {
-  data: RaceResult;
+export interface StandingsCacheResult {
+  data: CachedSessionStandings;
   isStale: boolean;
-  cachedAt: number;
 }
 
 /**
@@ -183,76 +184,78 @@ export async function getAllCachedDrivers(
   return drivers;
 }
 
-// Get race result from KV cache with staleness info
-export async function getRaceResultFromCache(
+// Get raw session standings from KV cache with staleness info
+// Returns raw API responses - transformation happens at read time in openf1.ts
+export async function getSessionStandingsFromCache(
   year: number,
-  sessionKey: number
-): Promise<CacheResult | null> {
+  sessionKey: number,
+  sessionDate: string
+): Promise<StandingsCacheResult | null> {
   try {
     const kv = env.F1_RACE_RESULTS;
     if (!kv) return null;
 
-    const cached = await kv.get(`race:${year}:${sessionKey}`, "json");
+    const cached = await kv.get(`standings:${year}:${sessionKey}`, "json");
     if (!cached) return null;
 
-    // Handle both old format (raw RaceResult) and new format (CachedRaceResultEntry)
-    const entry = cached as CachedRaceResultEntry | RaceResult;
+    const entry = cached as CachedSessionStandings;
 
-    if ("cachedAt" in entry && "data" in entry) {
-      // New format with metadata
-      const softTTL = getSoftTTL(entry.data.date);
-      const age = Date.now() - entry.cachedAt;
-      return {
-        data: entry.data,
-        isStale: age > softTTL,
-        cachedAt: entry.cachedAt,
-      };
-    } else {
-      // Old format - treat as stale to trigger refresh
-      return {
-        data: entry as RaceResult,
-        isStale: true,
-        cachedAt: 0,
-      };
+    // Validate it's the new format (has driverChampionship array)
+    if (!Array.isArray(entry.driverChampionship)) {
+      // Old format (transformed RaceResult) - treat as miss to force refetch
+      return null;
     }
+
+    const softTTL = getSoftTTL(sessionDate);
+    const age = Date.now() - entry.cachedAt;
+
+    return {
+      data: entry,
+      isStale: age > softTTL,
+    };
   } catch {
     return null;
   }
 }
 
-// Store race result in KV cache with metadata
+// Store raw session standings in KV cache
 // No expiration TTL - stale-while-revalidate handles freshness,
 // and keeping stale data allows the app to work during API outages/429s
-// Returns true if cache write succeeded, false otherwise
-export async function cacheRaceResult(year: number, result: RaceResult): Promise<boolean> {
+export async function cacheSessionStandings(
+  year: number,
+  sessionKey: number,
+  driverChampionship: ApiDriverChampionship[],
+  teamChampionship: ApiTeamChampionship[]
+): Promise<boolean> {
   try {
     const kv = env.F1_RACE_RESULTS;
     if (!kv) {
-      console.warn(`[cacheRaceResult] KV namespace F1_RACE_RESULTS not available`);
+      console.warn(`[cacheSessionStandings] KV namespace F1_RACE_RESULTS not available`);
       return false;
     }
 
-    const entry: CachedRaceResultEntry = {
-      data: result,
+    const entry: CachedSessionStandings = {
+      driverChampionship,
+      teamChampionship,
       cachedAt: Date.now(),
     };
 
-    const key = `race:${year}:${result.sessionKey}`;
+    const key = `standings:${year}:${sessionKey}`;
     await kv.put(key, JSON.stringify(entry));
-    console.log(`[cacheRaceResult] Successfully cached ${key}`);
+    console.log(`[cacheSessionStandings] Successfully cached ${key}`);
     return true;
   } catch (error) {
-    console.error(`[cacheRaceResult] Failed to cache race:${year}:${result.sessionKey}:`, error);
+    console.error(`[cacheSessionStandings] Failed to cache standings:${year}:${sessionKey}:`, error);
     return false;
   }
 }
 
-// Get all cached race results for a year (by listing keys)
-export async function getCachedRaceResultsForYear(
+// Get all cached session standings for a year
+export async function getCachedStandingsForYear(
   year: number,
-  sessionKeys: number[]
-): Promise<Map<number, CacheResult>> {
-  const results = new Map<number, CacheResult>();
+  sessions: Array<{ sessionKey: number; date: string }>
+): Promise<Map<number, StandingsCacheResult>> {
+  const results = new Map<number, StandingsCacheResult>();
 
   try {
     const kv = env.F1_RACE_RESULTS;
@@ -260,20 +263,20 @@ export async function getCachedRaceResultsForYear(
 
     // Fetch all known session keys in parallel
     const cached = await Promise.all(
-      sessionKeys.map(async (key) => {
+      sessions.map(async ({ sessionKey, date }) => {
         try {
-          const cacheResult = await getRaceResultFromCache(year, key);
-          return { key, cacheResult };
+          const cacheResult = await getSessionStandingsFromCache(year, sessionKey, date);
+          return { sessionKey, cacheResult };
         } catch {
           // Skip corrupted entries, keep others
-          return { key, cacheResult: null };
+          return { sessionKey, cacheResult: null };
         }
       })
     );
 
-    for (const { key, cacheResult } of cached) {
+    for (const { sessionKey, cacheResult } of cached) {
       if (cacheResult) {
-        results.set(key, cacheResult);
+        results.set(sessionKey, cacheResult);
       }
     }
   } catch {

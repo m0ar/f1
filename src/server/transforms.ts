@@ -8,6 +8,8 @@ import type {
 
 // Transform API driver championship data to app format
 // Set skipMissing=true for live updates where some drivers might not be resolved
+// Note: OpenF1 API often returns null for position_current and points_current,
+// so we compute positions from points order and treat null points as 0
 export function transformDriverStandings(
   apiStandings: ApiDriverChampionship[],
   drivers: ApiDriver[],
@@ -19,7 +21,8 @@ export function transformDriverStandings(
     driverMap.set(driver.driver_number, driver);
   }
 
-  const results: DriverStanding[] = [];
+  // First pass: collect all drivers with their points (treating null as 0)
+  const results: Omit<DriverStanding, "position">[] = [];
 
   for (const standing of apiStandings) {
     const driver = driverMap.get(standing.driver_number);
@@ -38,24 +41,30 @@ export function transformDriverStandings(
     }
 
     results.push({
-      position: standing.position_current,
       driver_number: standing.driver_number,
       driver_first_name: driver.first_name,
       driver_last_name: driver.last_name,
       driver_name_acronym: driver.name_acronym,
       team_name: driver.team_name,
       team_colour: driver.team_colour,
-      points: standing.points_current,
+      points: standing.points_current ?? 0,
       session_key: sessionKey,
     });
   }
 
-  return results;
+  // Sort by points descending and assign positions
+  results.sort((a, b) => b.points - a.points);
+
+  return results.map((r, index) => ({
+    ...r,
+    position: index + 1,
+  }));
 }
 
 // Transform API team championship data to app format
 // Only use when API team standings have valid team names
 // For unreliable data, use deriveTeamStandingsFromDriverStandings instead
+// Note: OpenF1 API sometimes returns null for points_current, treat as 0
 export function transformTeamStandings(
   apiStandings: ApiTeamChampionship[],
   drivers: ApiDriver[],
@@ -71,9 +80,9 @@ export function transformTeamStandings(
 
   return apiStandings.map((standing) => ({
     position: standing.position_current,
-    team_name: standing.team_name,
-    team_colour: teamColors.get(standing.team_name) || "",
-    points: standing.points_current,
+    team_name: standing.team_name ?? `[Unknown #${standing.position_current}]`,
+    team_colour: standing.team_name ? teamColors.get(standing.team_name) || "" : "",
+    points: standing.points_current ?? 0,
     session_key: sessionKey,
   }));
 }

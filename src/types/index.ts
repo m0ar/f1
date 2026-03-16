@@ -27,25 +27,27 @@ export interface RaceSession {
 }
 
 // Raw API response from /championship_drivers
+// Note: OpenF1 API sometimes returns null for points/position early in season
 export interface ApiDriverChampionship {
   meeting_key: number;
   session_key: number;
   driver_number: number;
   position_start: number | null;
-  position_current: number;
-  points_start: number;
-  points_current: number;
+  position_current: number | null;
+  points_start: number | null;
+  points_current: number | null;
 }
 
 // Raw API response from /championship_teams
+// Note: OpenF1 API sometimes returns null for team_name and points early in season
 export interface ApiTeamChampionship {
   meeting_key: number;
   session_key: number;
-  team_name: string;
+  team_name: string | null;
   position_start: number | null;
   position_current: number;
-  points_start: number;
-  points_current: number;
+  points_start: number | null;
+  points_current: number | null;
 }
 
 // Raw API response from /drivers

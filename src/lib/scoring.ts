@@ -224,16 +224,32 @@ export function getConstructorBetChartData(
 
 /**
  * Get driver championship points chart data.
+ * Pads missing drivers with 0 points to prevent lines from "popping up" mid-chart.
  */
 export function getDriverPointsChartData(
   raceResults: RaceResult[]
 ): PointsChartDataPoint[] {
+  // First pass: collect all unique drivers across all races
+  const allDrivers = new Set<string>();
+  raceResults.forEach((result) => {
+    result.driverStandings.forEach((driver) => {
+      allDrivers.add(`${driver.driver_first_name} ${driver.driver_last_name}`);
+    });
+  });
+
+  // Second pass: create data points with all drivers padded to 0
   return raceResults.map((result) => {
     const dataPoint: PointsChartDataPoint = {
       race: formatRaceLabel(result.circuitName, result.sessionName),
       sessionKey: result.sessionKey,
     };
 
+    // Initialize all drivers to 0
+    allDrivers.forEach((name) => {
+      dataPoint[name] = 0;
+    });
+
+    // Override with actual points for drivers in this race's standings
     result.driverStandings.forEach((driver) => {
       const name = `${driver.driver_first_name} ${driver.driver_last_name}`;
       dataPoint[name] = driver.points;
@@ -245,16 +261,32 @@ export function getDriverPointsChartData(
 
 /**
  * Get constructor championship points chart data.
+ * Pads missing constructors with 0 points to prevent lines from "popping up" mid-chart.
  */
 export function getConstructorPointsChartData(
   raceResults: RaceResult[]
 ): PointsChartDataPoint[] {
+  // First pass: collect all unique constructors across all races
+  const allTeams = new Set<string>();
+  raceResults.forEach((result) => {
+    result.teamStandings.forEach((team) => {
+      allTeams.add(team.team_name ?? `[Unknown #${team.position}]`);
+    });
+  });
+
+  // Second pass: create data points with all constructors padded to 0
   return raceResults.map((result) => {
     const dataPoint: PointsChartDataPoint = {
       race: formatRaceLabel(result.circuitName, result.sessionName),
       sessionKey: result.sessionKey,
     };
 
+    // Initialize all teams to 0
+    allTeams.forEach((name) => {
+      dataPoint[name] = 0;
+    });
+
+    // Override with actual points for teams in this race's standings
     result.teamStandings.forEach((team) => {
       const name = team.team_name ?? `[Unknown #${team.position}]`;
       dataPoint[name] = team.points;
